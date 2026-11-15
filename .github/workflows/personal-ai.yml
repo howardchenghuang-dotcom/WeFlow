@@ -31,10 +31,14 @@ jobs:
           node-version: "22"
       # One command, so that its exit code is the step's: pwsh goes on after a failed line of a
       # multi-line script, and a syntax error in main.mjs once passed this step unnoticed.
+      # The lock file must match package.json; the Electron download itself is not needed by the tests.
+      - name: Install from the lock file
+        working-directory: tools/ai-bridge
+        run: npm ci --ignore-scripts
       - name: Validate bridge modules
         working-directory: tools/ai-bridge
         run: npm run check
-      - name: Test local authentication, pairing, cancellation and input bounds
+      - name: Test guards, pairing, streaming, cancellation and stopping the backend
         working-directory: tools/ai-bridge
         run: npm test
       - name: Parse the Windows launcher scripts
@@ -68,7 +72,7 @@ jobs:
         with:
           name: personal-weflow-ai-webui-windows
           path: web/dist/
-          retention-days: 7
+          retention-days: 90
 
   backend-windows-x64:
     name: Build API v3 Windows backend for AI preview
@@ -97,4 +101,4 @@ jobs:
         with:
           name: personal-weflow-api-v3-windows-x64
           path: target/x86_64-pc-windows-msvc/release/weflow.exe
-          retention-days: 7
+          retention-days: 90

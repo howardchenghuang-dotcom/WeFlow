@@ -1,4 +1,7 @@
 # Local WeFlow AI desktop launcher. Stable port 18108 is never modified.
+# -NoBrowser starts the backend and the bridge without opening the page: what the sign-in shortcut of
+# install-startup.ps1 runs, so that the page is ready whenever it is opened later.
+param([switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 
 function Test-LocalPort([int]$Port) {
@@ -99,7 +102,8 @@ try {
   else {
     $previous = [Environment]::GetEnvironmentVariable('WEFLOW_HTTP_TOKEN', 'Process')
     try {
-      # Passing the token through an environment variable avoids exposing it in the process command line.
+      # The backend takes the token from its environment, so it is not in that process's command line.
+      # (It is in the address the browser is started with below: the WebUI needs it once per tab.)
       $env:WEFLOW_HTTP_TOKEN = $token
       $backendArgs = 'serve --host 127.0.0.1 --port 18110 --ui-dir "' + $ui + '" --no-browser'
       Start-Process -FilePath $backend -ArgumentList $backendArgs -WorkingDirectory $root -WindowStyle Hidden | Out-Null
@@ -137,7 +141,7 @@ try {
   # loses authentication in a fresh browser tab even when this launcher owns the service.
   # By now the server on 18110 is known to be this launcher's backend and to take this token.
   $url = 'http://127.0.0.1:18110/ui/?token=' + [Uri]::EscapeDataString($token)
-  Start-Process $url | Out-Null
+  if (-not $NoBrowser) { Start-Process $url | Out-Null }
 }
 catch {
   Add-Type -AssemblyName System.Windows.Forms
