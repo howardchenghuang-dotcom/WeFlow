@@ -113,9 +113,9 @@ function installIpc() {
     verify(event);
     return client.disconnect();
   });
-  ipcMain.handle('bridge-copy-token', event => {
+  ipcMain.handle('bridge-copy-token', async event => {
     verify(event);
-    clipboard.writeText(bridgeToken);
+    await clipboard.writeText(bridgeToken);
     return true;
   });
   ipcMain.handle('bridge-open-usage', async event => {
