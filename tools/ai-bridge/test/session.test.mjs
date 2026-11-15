@@ -23,7 +23,8 @@ describe('90-day browser pairing rules', () => {
     assert.equal(validBrowserSession(COOKIE_NAME + '=not-the-session', s), false);
   });
   it('issues HttpOnly same-site restricted-path cookies, with a clearing rule', () => {
-    const cookie = sessionCookie(newBrowserSession());
+    const now = 1_000_000;
+    const cookie = sessionCookie(newBrowserSession(now), now);
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
     assert.match(cookie, /Path=\/ai-auth/);
