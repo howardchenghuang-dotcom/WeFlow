@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { getMessages } from '../api/messages';
+import { buildAiPrompt, MAX_VISIBLE_TURNS, type AiTurn } from './chatHistory';
 import { prepareAiExcerpt } from './context';
 import { PROVIDERS } from './providers';
+import './ai-chat.css';
 
 const BRIDGE = 'http://127.0.0.1:18109';
 const MAX_QUESTION = 800;
@@ -20,7 +22,7 @@ async function bridgeRequest<T>(path: string, signal: AbortSignal, body?: object
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal,
   });
-  if (!response.ok) throw new Error('AI 本地授权失败（HTTP ' + response.status + '）');
+  if (!response.ok) throw new Error('AI 本地授权或分析失败（HTTP ' + response.status + '）');
   return await response.json() as T;
 }
 
@@ -28,7 +30,7 @@ function fromDate(days: number): number {
   return Math.floor(Date.now() / 1000) - days * 86400;
 }
 
-/** ChatGPT credentials are retained by the encrypted local service, never by this React UI. */
+/** Provider authentication is handled by the encrypted Windows sidecar, never this React UI. */
 export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionName: string }) {
   const [paired, setPaired] = useState(false);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
@@ -38,21 +40,41 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
   const [models, setModels] = useState<Model[]>([]);
   const [connected, setConnected] = useState(false);
   const [days, setDays] = useState(30);
-  const [question, setQuestion] = useState('请总结这些聊天记录的主要内容，并标出有依据的待办事项。');
-  const [consent, setConsent] = useState(false);
-  const [answer, setAnswer] = useState('');
-  const [citations, setCitations] = useState<{ localId: number; createTime: number; sender: string }[]>([]);
-  const [truncated, setTruncated] = useState(false);
+  const [question, setQuestion] = useState('');
+  const [includeExcerpt, setIncludeExcerpt] = useState(false);
+  const [turns, setTurns] = useState<AiTurn[]>([]);
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [epoch, setEpoch] = useState(0);
   const activeRequest = useRef<AbortController | null>(null);
+  const threadEnd = useRef<HTMLDivElement | null>(null);
+  const currentSession = useRef(sessionId);
+  const turnCounter = useRef(0);
 
   useEffect(() => {
+    currentSession.current = sessionId;
     activeRequest.current?.abort();
-    setAnswer(''); setCitations([]); setConsent(false); setError(''); setBusy(false);
+    setTurns([]);
+    setQuestion('');
+    setIncludeExcerpt(false);
+    setError('');
+    setBusy(false);
     return () => { activeRequest.current?.abort(); };
   }, [sessionId]);
+
+  useEffect(() => {
+    threadEnd.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [turns, busy, expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
 
   const refreshSession = async (signal: AbortSignal) => {
     const session = await bridgeRequest<CloudState>('/session', signal);
@@ -74,7 +96,6 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
 
   useEffect(() => {
     const controller = new AbortController();
-    // Probe the local background service without exposing bearer tokens.
     if (window.location.hostname !== '127.0.0.1' || window.location.port !== '18110') {
       setError('请使用 http://127.0.0.1:18110/ui/ 访问 AI 登录页面。');
       return () => controller.abort();
@@ -103,7 +124,6 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     setAuthBusy(true); setError('');
     const controller = new AbortController();
     try {
-      // The Windows background service opens the official OpenAI sign-in page.
       await bridgeRequest('/sign-in', controller.signal, {});
       await refreshSession(controller.signal);
     } catch (problem) {
@@ -117,35 +137,68 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     try {
       await bridgeRequest('/disconnect', controller.signal, {});
       setPaired(false); setConnected(false); setModels([]); setModel('');
-      setExpiresAt(null); setConsent(false);
+      setExpiresAt(null); setIncludeExcerpt(false);
+      setTurns([]);
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : '断开连接失败。');
     } finally { setAuthBusy(false); }
   };
 
   const ask = async () => {
-    if (!sessionId || !connected || !consent || !question.trim() || busy) return;
-    if (question.length > MAX_QUESTION) { setError('问题文字过长。'); return; }
-    setBusy(true); setError(''); setAnswer(''); setCitations([]);
+    const text = question.trim();
+    if (!sessionId || !connected || !text || busy || !model) return;
+    if (text.length > MAX_QUESTION) { setError('问题文字过长。'); return; }
+    const requestSession = sessionId;
+    const userTurn: AiTurn = {
+      id: 'user-' + (++turnCounter.current),
+      role: 'user',
+      text,
+      time: Date.now(),
+      model,
+    };
+    const history = turns;
+    setBusy(true); setError(''); setQuestion('');
+    setTurns(previous => [...previous, userTurn].slice(-MAX_VISIBLE_TURNS));
     const controller = new AbortController();
     activeRequest.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 135_000);
     try {
-      // Only the newest 200 entries of the selected conversation are fetched, not the account history.
-      const messages = await getMessages(sessionId, null, controller.signal, 200);
-      const result = prepareAiExcerpt({
-        sessionId, messages: messages.filter(item => item.localType === 1),
-        start: fromDate(days), end: Math.floor(Date.now() / 1000),
-        maxMessages: 80, maxCharacters: 12_000,
-      });
-      if (!result.citations.length) throw new Error('选定时间内最近的记录没有可分析的文本消息。');
-      const prompt = result.prompt + '\n\nUSER QUESTION: ' + question.trim();
+      let excerpt: string | undefined;
+      let citations: AiTurn['citations'];
+      let truncated = false;
+      if (includeExcerpt) {
+        // Explicitly requested current-session text only; no other contacts or media.
+        const messages = await getMessages(requestSession, null, controller.signal, 200);
+        const result = prepareAiExcerpt({
+          sessionId: requestSession,
+          messages: messages.filter(item => item.localType === 1),
+          start: fromDate(days), end: Math.floor(Date.now() / 1000),
+          maxMessages: 80, maxCharacters: 12_000,
+        });
+        if (!result.citations.length) throw new Error('选定时间内最近的记录没有可分析的文本消息。');
+        excerpt = result.prompt;
+        citations = result.citations;
+        truncated = result.truncated || messages.length >= 200;
+      }
+      const prompt = buildAiPrompt(text, history, excerpt);
       const data = await bridgeRequest<{ text: string }>('/complete', controller.signal, { model, prompt });
-      setAnswer(data.text);
-      setCitations(result.citations);
-      setTruncated(result.truncated || messages.length >= 200);
+      if (controller.signal.aborted || currentSession.current !== requestSession) return;
+      setTurns(previous => [...previous, {
+        id: 'assistant-' + (++turnCounter.current),
+        role: 'assistant',
+        text: data.text || '模型返回了空白内容。',
+        model,
+        time: Date.now(),
+        citations,
+        truncated,
+      }].slice(-MAX_VISIBLE_TURNS));
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : 'AI 分析失败，请检查本地桥接程序。');
+      if (!controller.signal.aborted && currentSession.current === requestSession) {
+        setError(problem instanceof Error ? problem.message : 'AI 分析失败，请检查本地桥接程序。');
+        // Keep the failed question editable and remove it from submitted history.
+        setQuestion(text);
+        setTurns(previous => previous.filter(turn => turn.id !== userTurn.id));
+      }
     } finally {
       window.clearTimeout(timeout);
       if (activeRequest.current === controller) {
@@ -155,8 +208,76 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     }
   };
 
-  return <div className="ai-assistant">
-    <p className="card-lead">AI 助手 · {sessionName}</p>
+  const stop = () => activeRequest.current?.abort();
+
+  const clear = () => {
+    if (busy) return;
+    setTurns([]); setError('');
+  };
+
+  const transcript = <div className="ai-thread" aria-label="AI 对话记录" aria-live="polite">
+    {!turns.length && <div className="ai-thread-empty">
+      <strong>可以直接开始提问</strong>
+      <p>连续追问会保留当前 AI 对话上下文。勾选下方选项后，才会附带这个微信会话的部分文字记录。</p>
+    </div>}
+    {turns.map(turn => <article className={'ai-turn ai-turn-' + turn.role} key={turn.id}>
+      <div className="ai-turn-heading">{turn.role === 'user' ? '你' : 'AI 助手'}
+        {turn.model && turn.role === 'assistant' && <span> · {models.find(item => item.slug === turn.model)?.displayName ?? turn.model}</span>}
+      </div>
+      <div className="ai-turn-body">{turn.text}</div>
+      {turn.truncated && <p className="ai-turn-note">本次只分析了部分微信聊天记录，并非完整历史。</p>}
+      {turn.citations && turn.citations.length > 0 && <details className="ai-turn-citations">
+        <summary>本轮微信引用范围（{turn.citations.length} 条）</summary>
+        <p>引用格式：[消息ID@Unix时间戳]。请人工核对模型引用。</p>
+        {turn.citations.map(item => <p key={item.localId + ':' + item.createTime}>
+          [{item.localId}@{item.createTime}] {new Date(item.createTime * 1000).toLocaleString()} · {item.sender}
+        </p>)}
+      </details>}
+    </article>)}
+    {busy && <p className="ai-thread-working" role="status">AI 正在生成回答…</p>}
+    <div ref={threadEnd} />
+  </div>;
+
+  const composer = <div className="ai-composer">
+    <label className="field-label" htmlFor="ai-question">向 AI 提问或连续追问</label>
+    <textarea id="ai-question" rows={3} maxLength={MAX_QUESTION} value={question}
+      placeholder="直接提问；Enter 发送，Shift+Enter 换行"
+      onChange={e => setQuestion(e.target.value)}
+      onKeyDown={event => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          void ask();
+        }
+      }} />
+    <label className="ai-context-option"><input type="checkbox" checked={includeExcerpt}
+      onChange={e => setIncludeExcerpt(e.target.checked)} />
+      <span>本轮附带当前微信聊天片段（需要发送至 ChatGPT 云端）</span></label>
+    {includeExcerpt && <div className="form-row">
+      <label className="field-label" htmlFor="ai-days">聊天范围</label>
+      <select id="ai-days" value={days} onChange={e => setDays(Number(e.target.value))}>
+        <option value={7}>最近 7 天</option><option value={30}>最近 30 天</option>
+        <option value={90}>最近 90 天</option><option value={365}>最近一年</option>
+      </select>
+      <p className="card-note">只读取本会话最近 200 条记录，最多附带 80 条文字、12,000 字，不包括媒体和其他会话。</p>
+    </div>}
+    <div className="ai-composer-actions">
+      {busy ? <button type="button" className="secondary-button" onClick={stop}>停止生成</button>
+        : <button type="button" className="primary-button" onClick={() => void ask()}
+          disabled={!connected || !model || !question.trim()}>发送给 AI</button>}
+      <button type="button" className="secondary-button" onClick={clear} disabled={busy || !turns.length}>清空本次 AI 对话</button>
+    </div>
+    <p className="ai-privacy-note">AI 对话只在当前页面内存保留，刷新页面会清空。连续追问会把最近的 AI 对话作为上下文发送；不会替你发送微信消息。</p>
+  </div>;
+
+  return <div className={'ai-assistant ai-chat-panel' + (expanded ? ' ai-chat-expanded' : '')}
+    role={expanded ? 'dialog' : undefined} aria-modal={expanded ? true : undefined}
+    aria-label={expanded ? 'WeFlow AI 对话窗口' : undefined}>
+    <div className="ai-chat-heading">
+      <p className="card-lead">AI 助手 · {sessionName}</p>
+      <button type="button" className="secondary-button" onClick={() => setExpanded(value => !value)}>
+        {expanded ? '收起窗口' : '展开聊天'}
+      </button>
+    </div>
     <div className="form-row">
       <label className="field-label" htmlFor="ai-provider">订阅提供商</label>
       <select id="ai-provider" defaultValue="chatgpt" aria-label="订阅提供商">
@@ -165,47 +286,30 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
         </option>)}
       </select>
     </div>
-    <p className="card-note">目前仅 ChatGPT 支持本工具的订阅登录。Claude、Gemini、GLM、Kimi 已纳入模型目录，待官方授权方式验证后才会开放。</p>
-    <p className="card-note">登录在本地加密后台完成，无需复制令牌。仅在你点击“分析”时发送选定的文字聊天片段。</p>
-    {!serviceReady && <p className="card-note">AI 本地后台未连接。请运行 tools/ai-bridge 目录中的 npm start。</p>}
+    {!serviceReady && <p className="card-note">AI 本地后台未连接。请启动 tools/ai-bridge 目录中的 npm start。</p>}
     {serviceReady && !paired && <button type="button" className="secondary-button"
       disabled={authBusy} onClick={() => void pair()}>启用本机 AI 登录（最长保留 90 天）</button>}
     {serviceReady && paired && !connected && <>
-      <p className="card-note">本机已配对。点击下方按钮会打开 OpenAI 官方登录页面，完成订阅共享授权。</p>
+      <p className="card-note">本机已配对，请先通过 OpenAI 官方授权页面登录。</p>
       <button type="button" className="primary-button" disabled={authBusy}
         onClick={() => void signIn()}>{authBusy ? '等待授权…' : '使用 ChatGPT 登录'}</button>
     </>}
-    {serviceReady && paired && <p className="card-note">本机配对有效期：{expiresAt ? new Date(expiresAt).toLocaleDateString() : '未获取'}。云端账号如提前失效，仍需重新登录。</p>}
     {connected && <>
-      <p className="card-note" role="status">ChatGPT 订阅已连接（连接 #{epoch}）</p>
-      <button type="button" className="secondary-button" disabled={authBusy} onClick={() => void disconnect()}>断开 ChatGPT 并清除本机配对</button>
-      <div className="form-row"><label className="field-label" htmlFor="ai-model">模型</label>
-        <select id="ai-model" value={model} onChange={e => setModel(e.target.value)}>
+      <div className="ai-chat-connection">
+        <span role="status">ChatGPT 已连接 #{epoch}</span>
+        <button type="button" className="secondary-button" disabled={authBusy || busy}
+          onClick={() => void disconnect()}>断开账户</button>
+      </div>
+      {expiresAt && <p className="card-note">本机配对有效至 {new Date(expiresAt).toLocaleDateString()}；云端授权可能提前失效。</p>}
+      <div className="form-row">
+        <label className="field-label" htmlFor="ai-model">模型</label>
+        <select id="ai-model" value={model} disabled={busy} onChange={e => setModel(e.target.value)}>
           {models.map(item => <option key={item.slug} value={item.slug}>{item.displayName}</option>)}
-        </select></div>
-      <div className="form-row"><label className="field-label" htmlFor="ai-days">查看范围</label>
-        <select id="ai-days" value={days} onChange={e => setDays(Number(e.target.value))}>
-          <option value={7}>最近 7 天</option><option value={30}>最近 30 天</option>
-          <option value={90}>最近 90 天</option><option value={365}>最近一年</option>
-        </select></div>
-      <p className="card-note">最多读取当前会话最近 200 条，发送其中最多 80 条文字消息；不包含图片、语音、其他会话。</p>
-      <div className="form-row"><label className="field-label" htmlFor="ai-question">向 AI 提问</label>
-        <textarea id="ai-question" rows={4} maxLength={MAX_QUESTION} value={question} onChange={e => setQuestion(e.target.value)} /></div>
-      <label className="card-note"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
-        我同意仅将上述选定消息发送至 ChatGPT 云端进行本次分析</label>
-      <button type="button" className="primary-button" onClick={() => void ask()}
-        disabled={!consent || !model || busy || !question.trim()}>{busy ? '分析中…' : '使用 ChatGPT Pro 分析'}</button>
-      {truncated && <p className="card-note">此次仅分析了部分聊天消息，不能代表完整会话历史。</p>}
-      {answer && <div className="card-note" style={{ whiteSpace: 'pre-wrap' }} role="status">{answer}</div>}
-      {citations.length > 0 && <details><summary>本次引用范围（{citations.length} 条）</summary>
-        <p className="card-note">引用格式：[消息ID@Unix时间戳]。模型生成的引用仍需要人工核对。</p>
-        <div style={{ maxHeight: 180, overflow: 'auto' }}>
-          {citations.map(item => <p className="card-note" key={item.localId + ':' + item.createTime}>
-            [{item.localId}@{item.createTime}] {new Date(item.createTime * 1000).toLocaleString()} · {item.sender}
-          </p>)}
-        </div>
-      </details>}
+        </select>
+      </div>
+      {transcript}
+      {composer}
     </>}
-    {error && <p role="alert" className="card-note">{error}</p>}
+    {error && <p role="alert" className="ai-chat-error">{error}</p>}
   </div>;
 }
