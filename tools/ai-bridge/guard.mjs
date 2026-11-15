@@ -1,7 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 
 export const AI_PORT = 18109;
-export const AI_ORIGINS = new Set(['http://127.0.0.1:18108', 'http://localhost:18108']);
+export const AI_ORIGINS = new Set([
+  'http://127.0.0.1:18108', 'http://localhost:18108',
+  // Preview WebUI: keep the user's stable WeFlow on port 18108 untouched.
+  'http://127.0.0.1:18110', 'http://localhost:18110',
+]);
 export const MAX_PROMPT = 28_000;
 
 export function validHost(host) {
