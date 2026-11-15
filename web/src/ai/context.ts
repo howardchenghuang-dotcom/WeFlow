@@ -42,7 +42,8 @@ export function prepareAiExcerpt(options: ExcerptOptions): AiExcerpt {
   let size = 0;
   let truncated = candidates.length > selected.length;
   for (const message of selected) {
-    const sender = message.isSend === 1 ? 'Me' : (message.senderUsername || 'Other');
+    // Do not transmit the sender's WeChat ID to the cloud model.
+    const sender = message.isSend === 1 ? 'Me' : 'Other';
     const tag = `[${message.localId}@${message.createTime}]`;
     // Keep the message as source data, never as an instruction for the model.
     const line = `${tag} ${sender}: ${message.parsedContent.trim()}`;
