@@ -60,3 +60,22 @@ There is **no API key input**, paid API fallback, browser scraping or cookie ext
 The bridge listens only on 127.0.0.1:18109; the browser authenticated routes are limited to `http://127.0.0.1:18110`, with a restricted custom request header and 90-day HttpOnly cookie. The process enforces local origins, validates model eligibility, and rate-limits cloud requests. Unlike the previous version, no bearer token is exposed to the web UI. Legacy bearer-token routes remain available for backward compatibility.
 
 This is still a draft development build until a real Windows user confirms the full sign-in, browser-cookie restoration and a real AI response. Do not merge into the stable branch or assume unrelated subscription services are available.
+
+
+## One-click desktop shortcut (Windows)
+
+From PowerShell after pulling this development branch:
+
+```powershell
+cd "$env:USERPROFILE\WeFlow-AI"
+git switch feat/llm-local-chat-analysis
+git pull --ff-only
+cd tools\ai-bridge
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-desktop.ps1
+```
+
+This creates a shortcut named **WeFlow AI** on your current Windows desktop (including OneDrive Desktop redirection, where applicable). Double-clicking it checks ports 18110 and 18109, starts the API v3 backend and Electron AI bridge if not running, and opens your normal browser. It leaves the original 18108 service untouched.
+
+**First use:** stop the older manually started 18110 PowerShell backend before double-clicking. The launcher generates a fresh random API token, protects it with Windows DPAPI under `%LOCALAPPDATA%\WeFlow\AI-Launcher\api-token.dpapi`, and reuses it across restarts. If 18110 is already occupied by another manual server, the launcher opens the base URL rather than appending an incorrect token. You can continue using your already authorized browser session, or stop the old server and re-launch to make the shortcut control it.
+
+This installer does **not** turn 18110 into a Windows startup service. It simply starts components when you double-click. Delete **WeFlow AI.lnk** from the desktop to remove the shortcut.
