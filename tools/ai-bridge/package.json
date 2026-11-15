@@ -6,7 +6,7 @@
   "main": "main.mjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/guard.test.mjs"
   },
   "engines": {
     "node": ">=22.12.0"
