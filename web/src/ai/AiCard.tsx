@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { getMessages } from '../api/messages';
 import { prepareAiExcerpt } from './context';
+import { PROVIDERS } from './providers';
 
 const BRIDGE = 'http://127.0.0.1:18109';
 const MAX_QUESTION = 800;
@@ -106,6 +107,15 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
 
   return <div className="ai-assistant">
     <p className="card-lead">AI 助手 · {sessionName}</p>
+    <div className="form-row">
+      <label className="field-label" htmlFor="ai-provider">订阅提供商</label>
+      <select id="ai-provider" defaultValue="chatgpt" aria-label="订阅提供商">
+        {PROVIDERS.map(provider => <option value={provider.id} key={provider.id} disabled={provider.status !== 'available'}>
+          {provider.title}{provider.status === 'available' ? ' · 已支持' : ' · 暂未支持'}
+        </option>)}
+      </select>
+    </div>
+    <p className="card-note">目前仅 ChatGPT 支持本工具的订阅登录。Claude、Gemini、GLM、Kimi 已纳入模型目录，待官方授权方式验证后才会开放。</p>
     <p className="card-note">请先在 Windows 启动 WeFlow AI 桥接程序并通过 ChatGPT 订阅登录；仅在你点击“分析”时发送所选聊天片段。</p>
     {!connected && <>
       <div className="form-row"><label className="field-label" htmlFor="ai-bridge-token">本地桥接令牌</label>
