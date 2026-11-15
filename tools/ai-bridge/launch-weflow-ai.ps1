@@ -78,15 +78,13 @@ try {
     if (-not (Test-LocalPort 18109)) { throw 'ChatGPT local bridge did not start on port 18109.' }
   }
 
-  # A previously started manual backend may use a different access token.
-  # Never pretend this launcher's new token controls a different live process.
-  if ($alreadyRunning) {
-    Start-Process 'http://127.0.0.1:18110/ui/' | Out-Null
-  }
-  else {
-    $url = 'http://127.0.0.1:18110/ui/?token=' + [Uri]::EscapeDataString($token)
-    Start-Process $url | Out-Null
-  }
+  # Always supply the launcher's persistent, locally encrypted token.
+  # The WebUI strips it from the address bar once consumed. Opening /ui/ alone
+  # loses authentication in a fresh browser tab even when this launcher owns the service.
+  # A separately started manual server may have a different token: stop it before
+  # launching the desktop shortcut so the launcher can start its own process.
+  $url = 'http://127.0.0.1:18110/ui/?token=' + [Uri]::EscapeDataString($token)
+  Start-Process $url | Out-Null
 }
 catch {
   Add-Type -AssemblyName System.Windows.Forms
