@@ -234,10 +234,10 @@ export function useChatPage(shell: Shell, prefs: Preferences, category: Category
       </>,
     },
     {
-      id: 'ai', title: 'AI 助手', summary: 'ChatGPT 订阅 · 仅本地使用',
+      id: 'ai', title: t('AI 助手'), summary: t('用你的 ChatGPT 订阅分析这个会话'),
       content: selected.live && liveSession
         ? <AiCard key={scope} sessionId={liveSession.username} sessionName={selected.name} />
-        : <p className="card-note">连接 WeFlow 后选择一个真实的微信会话，即可使用 AI 分析。</p>,
+        : <p className="card-note">{t('连接 WeFlow 后选择一个真实的微信会话，即可使用 AI 分析。')}</p>,
     },
     {
       id: 'search', title: t('搜索'), summary: selected.live ? searchSummary(liveSearch.state) : submittedQuery === null ? t('当前会话') : t('{n} 条结果', { n: results.length }),

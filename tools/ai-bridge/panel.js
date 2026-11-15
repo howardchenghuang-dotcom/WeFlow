@@ -14,7 +14,6 @@ async function run(action) {
 }
 btn('signIn').onclick = () => run(() => window.weflowBridge.signIn());
 btn('disconnect').onclick = () => run(() => window.weflowBridge.disconnect());
-btn('copy').onclick = () => run(() => window.weflowBridge.copyToken());
 btn('usage').onclick = () => run(() => window.weflowBridge.openUsage());
 window.weflowBridge.onError(message => { status.textContent = message; });
 refresh();

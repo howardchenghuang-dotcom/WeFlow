@@ -50,3 +50,73 @@
   .ai-chat-expanded { width: 100vw; height: 100dvh; top: 0; left: 0; transform: none; border-radius: 0; padding: 14px; }
   .ai-turn-user, .ai-turn-assistant { width: 100%; }
 }
+
+/* getting started: three steps, the one to do now standing out */
+.ai-setup { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.ai-steps { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--fg-subtle); }
+.ai-steps li { display: inline-flex; align-items: center; gap: 6px; }
+.ai-steps li[data-state="current"] { color: var(--fg); font-weight: 600; }
+.ai-steps li[data-state="done"] { color: var(--fg-muted); }
+.ai-step-mark {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex: none;
+  border-radius: 50%; font-size: 11px; font-weight: 600; box-shadow: var(--neu-inset);
+}
+.ai-steps li[data-state="current"] .ai-step-mark { box-shadow: var(--neu-raised-sm); }
+.ai-steps li[data-state="done"] .ai-step-mark { color: #07c160; }
+
+.ai-connected { display: inline-flex; align-items: center; gap: 6px; }
+.ai-connected::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #07c160; }
+.ai-model { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.ai-model select { max-width: 220px; }
+
+.ai-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
+.ai-suggestions .chip { cursor: pointer; }
+
+.ai-turn-actions { display: flex; justify-content: flex-end; }
+.ai-turn-copy {
+  padding: 2px 8px; border: 0; border-radius: 8px; background: none; color: var(--fg-subtle);
+  font: inherit; font-size: 11px; cursor: pointer;
+}
+.ai-turn-copy:hover, .ai-turn-copy:focus-visible { color: var(--fg); box-shadow: var(--neu-raised-sm); }
+
+.ai-thread-working { display: flex; align-items: center; gap: 8px; }
+.ai-dots { display: inline-flex; gap: 4px; }
+.ai-dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .3; animation: ai-dot 1.2s infinite ease-in-out; }
+.ai-dots i:nth-child(2) { animation-delay: .2s; }
+.ai-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes ai-dot { 0%, 80%, 100% { opacity: .3; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ai-dots i { animation: none; opacity: .6; } }
+
+.ai-composer-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ai-count { flex: none; font-size: 11px; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+.ai-excerpt-size { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding-left: 20px; }
+.ai-excerpt-size .card-note { flex-basis: 100%; margin: 0; }
+
+.ai-about { font-size: 12px; line-height: 1.6; color: var(--fg-muted); }
+.ai-about summary { cursor: pointer; }
+.ai-about ul { margin: 6px 0 10px; padding-left: 18px; }
+.ai-about p { margin: 6px 0; }
+
+.ai-chat-backdrop { position: fixed; inset: 0; z-index: 999; background: rgba(0, 0, 0, .35); }
+
+/* an answer in Markdown */
+.ai-turn-assistant .ai-turn-body { white-space: normal; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md .md-table { margin: 0 0 10px; }
+.md h3, .md h4, .md h5 { margin: 14px 0 6px; line-height: 1.4; }
+.md h3 { font-size: 15px; }
+.md h4 { font-size: 14px; }
+.md h5 { font-size: 13px; }
+.md ul, .md ol { padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md code { padding: 1px 5px; border-radius: 5px; box-shadow: var(--neu-inset); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.md pre { padding: 10px 12px; overflow-x: auto; border-radius: 10px; box-shadow: var(--neu-inset); }
+.md pre code { padding: 0; box-shadow: none; white-space: pre; }
+.md blockquote { padding-left: 10px; border-left: 3px solid var(--fg-subtle); color: var(--fg-muted); }
+.md hr { margin: 12px 0; border: 0; border-top: 1px solid var(--fg-subtle); opacity: .4; }
+.md a { color: inherit; text-decoration: underline; }
+.md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 12px; }
+.md th, .md td { padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--fg-subtle) 40%, transparent); text-align: left; vertical-align: top; }
+.md th { font-weight: 600; }

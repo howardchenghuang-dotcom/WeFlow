@@ -1,81 +1,80 @@
-# WeFlow Personal AI — Windows development preview
+# WeFlow Personal AI — Windows preview
 
-The WeFlow API v3 preview at `http://127.0.0.1:18110/ui/` can now control official ChatGPT sign-in and conversation analysis without manually copying a bearer token. ChatGPT subscription usage must be eligible under the official DevKit; API key billing is never a fallback.
+An AI assistant inside the WeFlow preview WebUI (`http://127.0.0.1:18110/ui/`) that answers with **your own ChatGPT plan**, through OpenAI's official Sign in with ChatGPT DevKit. There is no API key input and no metered API fallback. Everything runs on your own Windows computer; the stable WeFlow on port 18108 is never touched.
 
-## After updating the existing checkout
-
-You already have the matching Rust backend on port 18110 and the official DevKit at `tools/ai-bridge/siwc-devkit`. Do not overwrite the original stable backend on port 18108.
-
-1. Close any older `WeFlow AI · ChatGPT Pro` window and stop its previous background process on port 18109.
-2. In a new PowerShell:
-
-```powershell
-cd "$env:USERPROFILE\WeFlow-AI"
-git switch feat/llm-local-chat-analysis
-git pull --ff-only
-cd web
-bun install --frozen-lockfile
-bun run check
-cd ..\tools\ai-bridge
-npm install
-npm test
-npm start
-```
-
-3. Keep the 18109 bridge PowerShell running. The bridge runs **without an Electron window** by default. It opens your normal browser during sign-in.
-4. With the existing API v3 server still running on port 18110, **refresh** `http://127.0.0.1:18110/ui/` (use the token-bearing URL supplied by your local backend if it asks).
-5. Choose a WeChat conversation and open the AI card.
-6. Click **启用本机 AI 登录** (first run only); then click **使用 ChatGPT 登录** and complete the official browser authorization. After that the model list loads automatically. You will not need to copy a bridge token.
-7. For automatic bridge startup after Windows sign-in, run once from `tools\ai-bridge`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install-startup.ps1
-```
-
-The shortcut is created in **the current user's Startup folder**. Delete `WeFlow Personal AI Bridge.lnk` from Startup to undo.
-
-## 90-day behavior
-
-- The browser-to-local-bridge pairing cookie is `HttpOnly; SameSite=Strict`, scoped to `/ai-auth`, and expires no later than 90 days after you pair.
-- Its secret is saved *encrypted* in Electron's Windows OS-protected `safeStorage`, enabling recovery after a bridge restart.
-- The underlying OpenAI OAuth refresh tokens are managed by the official local SDK, not by our 90-day cookie. Account revocation, SDK token expiration, subscription changes or provider security checks can require signing in earlier. **This is not a guarantee of 90 days of uninterrupted provider login.**
-- The browser pairing works at **127.0.0.1**, not `localhost`, because the latter is a different cookie site.
-- Disconnect removes the local pairing and invokes the SDK's account disconnect operation.
-- Only explicitly selected text (up to 80 messages, 12,000 characters from the newest 200 entries of the selected session) is sent to the cloud after opt-in.
-
-## Supported subscriptions
-
-| Provider | In-app subscription login | Notes |
+| Part | Where | What it does |
 |---|---|---|
-| ChatGPT | Available for testing | Official Sign In With ChatGPT DevKit, plan/usage restrictions apply |
-| Claude | Not enabled | A compliant subscription authorization for this third-party use is not verified |
-| Gemini | Not enabled | A compliant subscription authorization for this use is not verified |
-| GLM | Not enabled | Coding Plan eligibility for generic chat analysis is not verified |
-| Kimi | Not enabled | Kimi Code plan eligibility for generic chat analysis is not verified |
+| Backend | `preview-bin\weflow.exe`, port 18110 | Reads WeChat's databases read-only and serves the WebUI |
+| AI bridge | Electron, port 18109 | Holds the ChatGPT sign-in, talks to OpenAI, shows the tray icon |
+| WebUI | `web\dist` | The AI card in a conversation's side panel |
 
-There is **no API key input**, paid API fallback, browser scraping or cookie extraction for these services. Subscription quotas, model eligibility and any optional paid overages are controlled by the providers. Keep overage/credits **off** in your ChatGPT account settings if strict no-additional-payment is required.
+## Install or update
+
+Needs Node.js 22.12 or later, Git, [bun](https://bun.sh), and the [GitHub CLI](https://cli.github.com) signed in (`gh auth login`) or Rust, for the backend.
+
+```powershell
+cd "$env:USERPROFILE\WeFlow-AI\tools\ai-bridge"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` installs the bridge's dependencies from `package-lock.json`, clones and builds the DevKit at a pinned commit, builds the WebUI, fetches the backend that GitHub Actions built from this branch (or builds it with cargo), and puts a **WeFlow AI** shortcut on the desktop. Run it again after every `git pull`; quit WeFlow AI first. Options: `-UpdateBackend` fetches the backend again, `-Startup` also starts WeFlow AI in the background when you sign in to Windows, `-NoShortcut` leaves the desktop alone.
+
+Backend builds are kept on GitHub for 90 days. If none is left, the installer prints the command that makes a new one.
+
+## Daily use
+
+1. Double-click **WeFlow AI** on the desktop. It starts the backend and the bridge if they are not running and opens the page, already signed in to the local backend.
+2. Open a WeChat conversation and the **AI 助手** card. The first time, the card walks through three steps:
+   - **启动本机 AI 服务** — done by the shortcut.
+   - **允许这个浏览器使用** — click it, then choose **允许** in the small **WeFlow AI** window the bridge opens. A pairing is granted by you at this computer, never by a web page or another program.
+   - **登录 ChatGPT** — OpenAI's own sign-in page opens in a new tab.
+3. Ask. Enter sends, Shift+Enter starts a new line. Answers appear as they are written; **停止生成** stops the request at OpenAI too.
+4. To stop everything, right-click the green **WeFlow AI** icon in the notification area and choose **退出 WeFlow AI**. That also stops the backend this launcher started (and only that one).
+
+## What is sent to the cloud
+
+- **Your question and the earlier turns of the AI conversation** (at most 8,000 characters of them) go to OpenAI with every question. Earlier answers may quote chat text the AI was given.
+- **WeChat text goes only when you tick "本轮附带这个会话的微信聊天片段"**, and only for that one question: the box unticks itself after each send, and the send button says when it is attached. It is the latest 30, 80 or 150 text messages of the open conversation, at most 16,000 characters. No pictures, voice, files, other conversations or WeChat IDs; in a group, the others are sent as "Member 1", "Member 2".
+- Requests are made with `store: false`. The AI conversation lives in the page only and is gone on reload. The bridge logs no prompt text.
+- The ChatGPT credentials stay in the bridge, encrypted with Windows `safeStorage`. The local backend's access token stays between the launcher, the browser tab and port 18110.
+
+## The "90 days"
+
+- The pairing of **this browser with the local bridge** is an `HttpOnly; SameSite=Strict` cookie that expires 90 days after you allow it, and is not extended silently. Its secret is stored encrypted, so the pairing survives a restart.
+- The **ChatGPT sign-in itself** is OpenAI's: the DevKit renews it for as long as OpenAI allows. Revocation, plan changes or OpenAI's security checks can ask you to sign in again sooner. This is not a promise of 90 days without signing in.
+- Use `http://127.0.0.1:18110`, not `localhost`: they are different sites to the cookie.
+
+## Which subscriptions can be used
+
+Checked against each provider's own pages on 2026-11-15. A web subscription is not an API entitlement.
+
+| Provider | Usable here | Why |
+|---|---|---|
+| ChatGPT | Yes | OpenAI's [Sign in with ChatGPT DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit) is for open-source apps on the user's own machine (noncommercial licence) |
+| Claude Pro/Max | No | Anthropic allows plan sign-in in its own clients only; third parties may not offer Claude sign-in or relay its credentials |
+| Gemini (AI Pro/Ultra) | No | The plan includes no API usage; the Gemini CLI terms forbid third-party software from using its sign-in |
+| GLM Coding Plan | No | Only inside the coding tools Zhipu lists; your own app must use the metered API |
+| Kimi Code | No | For coding and personal interactive use; not for analysing chat logs |
+
+Usage limits and optional paid overage are the provider's. Keep overage/credits **off** in ChatGPT Settings > Usage if nothing beyond the plan may ever be charged.
 
 ## Security boundaries
 
-The bridge listens only on 127.0.0.1:18109; the browser authenticated routes are limited to `http://127.0.0.1:18110`, with a restricted custom request header and 90-day HttpOnly cookie. The process enforces local origins, validates model eligibility, and rate-limits cloud requests. Unlike the previous version, no bearer token is exposed to the web UI. Legacy bearer-token routes remain available for backward compatibility.
+- The bridge listens on `127.0.0.1:18109` only. It answers one origin, `http://127.0.0.1:18110`, checks the `Host` header (DNS rebinding), requires a custom header on every request and the pairing cookie on everything but pairing itself. Other web sites cannot reach it.
+- Origin and headers do not stop a program on this computer, which can send whatever it likes. That is why pairing asks you in a native window, and why the bridge has no other way in (the bearer-token routes of the first builds are removed).
+- The launcher shows its token only to the backend it started: it checks that the program on 18110 is this checkout's `preview-bin\weflow.exe` and that it accepts the token.
+- The preview backend and a stable WeFlow share one config file and cache (`%APPDATA%\weflow`). They do not share a port.
 
-This is still a draft development build until a real Windows user confirms the full sign-in, browser-cookie restoration and a real AI response. Do not merge into the stable branch or assume unrelated subscription services are available.
-
-
-## One-click desktop shortcut (Windows)
-
-From PowerShell after pulling this development branch:
+## Development
 
 ```powershell
-cd "$env:USERPROFILE\WeFlow-AI"
-git switch feat/llm-local-chat-analysis
-git pull --ff-only
 cd tools\ai-bridge
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install-desktop.ps1
+npm run check   # syntax of every bridge file
+npm test        # guards, session, HTTP surface, stopping the backend
+cd ..\..\web
+bun run check   # contract, translations, types, tests, build
 ```
 
-This creates a shortcut named **WeFlow AI** on your current Windows desktop (including OneDrive Desktop redirection, where applicable). Double-clicking it checks ports 18110 and 18109, starts the API v3 backend and Electron AI bridge if not running, and opens your normal browser. It leaves the original 18108 service untouched.
+The HTTP surface is in `server.mjs`, free of Electron, so the tests drive it over a real socket with a fake ChatGPT client. `main.mjs` only wires Electron to it.
 
-**First use:** stop the older manually started 18110 PowerShell backend before double-clicking. The launcher generates a fresh random API token, protects it with Windows DPAPI under `%LOCALAPPDATA%\WeFlow\AI-Launcher\api-token.dpapi`, and reuses it across restarts. If 18110 is already occupied by another manual server, the launcher opens the base URL rather than appending an incorrect token. You can continue using your already authorized browser session, or stop the old server and re-launch to make the shortcut control it.
-
-This installer does **not** turn 18110 into a Windows startup service. It simply starts components when you double-click. Delete **WeFlow AI.lnk** from the desktop to remove the shortcut.
+This is a personal preview. Do not merge it into the stable branch without running it for real on Windows: sign-in, an answer, a restart.

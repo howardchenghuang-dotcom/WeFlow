@@ -84,3 +84,6 @@ __pycache__/
 # Personal AI bridge: official DevKit cloned locally; never commit its files or credentials
 /tools/ai-bridge/siwc-devkit/
 /tools/ai-bridge/.env*
+
+# The bridge tests live in a folder the rule `test/` above would hide from `git add`
+!/tools/ai-bridge/test/

@@ -29,17 +29,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # One command, so that its exit code is the step's: pwsh goes on after a failed line of a
+      # multi-line script, and a syntax error in main.mjs once passed this step unnoticed.
+      # The lock file must match package.json; the Electron download itself is not needed by the tests.
+      - name: Install from the lock file
+        working-directory: tools/ai-bridge
+        run: npm ci --ignore-scripts
       - name: Validate bridge modules
+        working-directory: tools/ai-bridge
+        run: npm run check
+      - name: Test guards, pairing, streaming, cancellation and stopping the backend
+        working-directory: tools/ai-bridge
+        run: npm test
+      - name: Parse the Windows launcher scripts
         working-directory: tools/ai-bridge
         shell: pwsh
         run: |
-          node --check main.mjs
-          node --check guard.mjs
-          node --check panel.js
-          node --check preload.cjs
-      - name: Test local authentication and input bounds
-        working-directory: tools/ai-bridge
-        run: node --test test/guard.test.mjs test/session.test.mjs
+          $failed = $false
+          foreach ($script in Get-ChildItem -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Host "$($script.Name): $_" } }
+          }
+          if ($failed) { exit 1 }
 
   webui:
     name: WebUI typecheck, tests and build
@@ -60,7 +72,7 @@ jobs:
         with:
           name: personal-weflow-ai-webui-windows
           path: web/dist/
-          retention-days: 7
+          retention-days: 90
 
   backend-windows-x64:
     name: Build API v3 Windows backend for AI preview
@@ -89,4 +101,4 @@ jobs:
         with:
           name: personal-weflow-api-v3-windows-x64
           path: target/x86_64-pc-windows-msvc/release/weflow.exe
-          retention-days: 7
+          retention-days: 90
