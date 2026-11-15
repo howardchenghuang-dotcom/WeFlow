@@ -41,11 +41,11 @@ export function prepareAiExcerpt(options: ExcerptOptions): AiExcerpt {
   const lines: string[] = [];
   let size = 0;
   let truncated = candidates.length > selected.length;
-  for (const message of selected) {
-    // Do not transmit the sender's WeChat ID to the cloud model.
+  // Budget newest messages first, then restore chronological order in the prompt.
+  // Otherwise a long older message can crowd out all recent conversations.
+  for (const message of [...selected].reverse()) {
     const sender = message.isSend === 1 ? 'Me' : 'Other';
     const tag = `[${message.localId}@${message.createTime}]`;
-    // Keep the message as source data, never as an instruction for the model.
     const line = `${tag} ${sender}: ${message.parsedContent.trim()}`;
     const left = maxCharacters - size;
     if (left <= 0) { truncated = true; break; }
@@ -55,6 +55,8 @@ export function prepareAiExcerpt(options: ExcerptOptions): AiExcerpt {
     citations.push({ localId: message.localId, createTime: message.createTime, sender });
     if (accepted.length < line.length) { truncated = true; break; }
   }
+  lines.reverse();
+  citations.reverse();
 
   return {
     sessionId, start, end, citations, truncated,
