@@ -132,6 +132,8 @@ async function boot() {
     appName: 'WeFlow Personal AI',
     appId: 'weflow-personal-ai',
     redirectPort: 0,
+    // The ChatGPT OSS sign-in flow associates this local installation with a stable host ID.
+    sendHostId: true,
     storageDir: join(app.getPath('userData'), 'chatgpt'),
     credentialEncryption: credentialEncryption(),
     openBrowser: async target => {
