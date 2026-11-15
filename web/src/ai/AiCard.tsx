@@ -22,8 +22,30 @@ async function bridgeRequest<T>(path: string, signal: AbortSignal, body?: object
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal,
   });
-  if (!response.ok) throw new Error('AI 本地授权或分析失败（HTTP ' + response.status + '）');
+  if (!response.ok) throw new BridgeError(response.status, await response.json().catch(() => null));
   return await response.json() as T;
+}
+
+/** A refusal of the bridge, said in the reader's language where the cause is known. */
+export class BridgeError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(status: number, body: unknown) {
+    const detail = body && typeof body === 'object' ? body as { error?: unknown; code?: unknown } : {};
+    const code = typeof detail.code === 'string' ? detail.code : null;
+    const known: Record<string, string> = {
+      bridge_busy: '上一个 AI 请求还在进行，请稍候再试。',
+      pairing_declined: '本机配对被拒绝。请在弹出的「WeFlow AI」窗口中选择「允许」。',
+      not_paired: '本机配对已失效，请重新启用本机 AI 登录。',
+      sharing_not_enabled: 'ChatGPT 未登录或未授权订阅共享，请重新登录。',
+      timeout: 'ChatGPT 没有在限定时间内回答，请重试。',
+      subscription_sharing_usage_limit_exceeded: 'ChatGPT 订阅额度已用完。请在 ChatGPT 设置 > Usage 中查看用量。',
+    };
+    const reason = (code && known[code]) || (typeof detail.error === 'string' ? detail.error : '');
+    super(reason ? reason + '（HTTP ' + status + '）' : 'AI 本地授权或分析失败（HTTP ' + status + '）');
+    this.status = status;
+    this.code = code;
+  }
 }
 
 function fromDate(days: number): number {
@@ -161,7 +183,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     setTurns(previous => [...previous, userTurn].slice(-MAX_VISIBLE_TURNS));
     const controller = new AbortController();
     activeRequest.current = controller;
-    const timeout = window.setTimeout(() => controller.abort(), 135_000);
+    const timeout = window.setTimeout(() => controller.abort('timeout'), 135_000);
     try {
       let excerpt: string | undefined;
       let citations: AiTurn['citations'];
@@ -182,7 +204,9 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       }
       const prompt = buildAiPrompt(text, history, excerpt);
       const data = await bridgeRequest<{ text: string }>('/complete', controller.signal, { model, prompt });
-      if (controller.signal.aborted || currentSession.current !== requestSession) return;
+      if (currentSession.current !== requestSession) return;
+      // stopped just as the answer arrived: handled below like any other stop
+      controller.signal.throwIfAborted();
       const assistantTurn: AiTurn = {
         id: 'assistant-' + (++turnCounter.current),
         role: 'assistant',
@@ -193,12 +217,21 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
         truncated,
       };
       setTurns(previous => [...previous, assistantTurn].slice(-MAX_VISIBLE_TURNS));
+      // "本轮" means this turn: the next question sends WeChat text only when it is ticked again.
+      setIncludeExcerpt(false);
     } catch (problem) {
-      if (!controller.signal.aborted && currentSession.current === requestSession) {
-        setError(problem instanceof Error ? problem.message : 'AI 分析失败，请检查本地桥接程序。');
-        // Keep the failed question editable and remove it from submitted history.
-        setQuestion(text);
-        setTurns(previous => previous.filter(turn => turn.id !== userTurn.id));
+      // Another conversation was opened meanwhile: its card starts empty, nothing to put back.
+      if (currentSession.current !== requestSession) return;
+      const reason: unknown = controller.signal.reason;
+      if (!controller.signal.aborted) setError(problem instanceof Error ? problem.message : 'AI 分析失败，请检查本地桥接程序。');
+      else if (reason === 'timeout') setError('等待 AI 回答超过 135 秒，已停止。可以缩小聊天范围后重试。');
+      else if (reason !== 'stop') return;
+      // Stopped, timed out or failed: the question is editable again and no unanswered turn stays in the
+      // history, where the next question would send it along.
+      setQuestion(current => current || text);
+      setTurns(previous => previous.filter(turn => turn.id !== userTurn.id));
+      if (problem instanceof BridgeError && (problem.status === 401 || problem.status === 403)) {
+        void refreshSession(new AbortController().signal).catch(() => {});
       }
     } finally {
       window.clearTimeout(timeout);
@@ -209,7 +242,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     }
   };
 
-  const stop = () => activeRequest.current?.abort();
+  const stop = () => activeRequest.current?.abort('stop');
 
   const clear = () => {
     if (busy) return;
@@ -267,7 +300,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
           disabled={!connected || !model || !question.trim()}>发送给 AI</button>}
       <button type="button" className="secondary-button" onClick={clear} disabled={busy || !turns.length}>清空本次 AI 对话</button>
     </div>
-    <p className="ai-privacy-note">AI 对话只在当前页面内存保留，刷新页面会清空。连续追问会把最近的 AI 对话作为上下文发送；不会替你发送微信消息。</p>
+    <p className="ai-privacy-note">AI 对话只在当前页面内存保留，刷新页面会清空。连续追问会把最近的 AI 对话（包括 AI 此前对微信片段的引用和总结）作为上下文发送；微信聊天片段只随勾选的那一轮发送，发送后自动取消勾选。不会替你发送微信消息。</p>
   </div>;
 
   return <div className={'ai-assistant ai-chat-panel' + (expanded ? ' ai-chat-expanded' : '')}
@@ -289,7 +322,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     </div>
     {!serviceReady && <p className="card-note">AI 本地后台未连接。请启动 tools/ai-bridge 目录中的 npm start。</p>}
     {serviceReady && !paired && <button type="button" className="secondary-button"
-      disabled={authBusy} onClick={() => void pair()}>启用本机 AI 登录（最长保留 90 天）</button>}
+      disabled={authBusy} onClick={() => void pair()}>{authBusy ? '请在弹出的「WeFlow AI」窗口中点击「允许」…' : '启用本机 AI 登录（最长保留 90 天）'}</button>}
     {serviceReady && paired && !connected && <>
       <p className="card-note">本机已配对，请先通过 OpenAI 官方授权页面登录。</p>
       <button type="button" className="primary-button" disabled={authBusy}
