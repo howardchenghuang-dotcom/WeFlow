@@ -66,7 +66,7 @@ describe('App', () => {
     expect(screen.getByRole('navigation', { name: '主导航' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '操作控制台' })).toBeTruthy();
     expect(screen.queryByText('操作控制台')).toBeNull();
-    expect(Array.from(document.querySelectorAll('.card-title'), title => title.textContent)).toEqual(['导出', '任务中心', 'AI 助手', '搜索', '会话资料', '媒体文件']);
+    expect(Array.from(document.querySelectorAll('.card-title'), title => title.textContent)).toEqual(['导出', '任务中心', '搜索', '会话资料', '媒体文件']);
     expect(screen.getByText('示例数据 · 连接 weflow serve 后显示真实会话')).toBeTruthy();
     expect(screen.getByRole('button', { name: '选择设计协作群' }).textContent).toContain('李婷：这版看起来不错');
   });
