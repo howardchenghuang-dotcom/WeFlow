@@ -1,0 +1,52 @@
+.ai-chat-panel { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ai-chat-heading, .ai-chat-connection, .ai-composer-actions {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+}
+.ai-chat-heading .card-lead { min-width: 0; overflow-wrap: anywhere; }
+.ai-chat-heading button { flex-shrink: 0; }
+.ai-chat-connection { font-size: 12px; color: var(--fg-muted); }
+.ai-thread {
+  min-height: 180px; max-height: min(340px, 42dvh); overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 12px; padding: 12px 8px;
+  border-radius: var(--radius-lg); box-shadow: var(--neu-inset); background: var(--surface);
+  scrollbar-width: thin;
+}
+.ai-thread-empty { margin: auto 8px; text-align: center; color: var(--fg-muted); font-size: 13px; }
+.ai-thread-empty p { margin-top: 8px; line-height: 1.6; }
+.ai-turn { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+.ai-turn-user { align-self: flex-end; width: min(88%, 620px); }
+.ai-turn-assistant { align-self: flex-start; width: min(94%, 720px); }
+.ai-turn-heading { font-size: 11px; font-weight: 600; color: var(--fg-subtle); }
+.ai-turn-user .ai-turn-heading { text-align: right; }
+.ai-turn-heading span { font-weight: 400; }
+.ai-turn-body {
+  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+  padding: 12px 14px; font-size: 13px; line-height: 1.7;
+  border-radius: 13px; background: var(--surface);
+  box-shadow: var(--neu-raised-sm);
+}
+.ai-turn-user .ai-turn-body { box-shadow: var(--neu-inset); }
+.ai-turn-citations { font-size: 11px; line-height: 1.5; color: var(--fg-muted); }
+.ai-turn-citations p { margin: 4px 0; overflow-wrap: anywhere; }
+.ai-turn-note, .ai-thread-working { font-size: 12px; color: var(--fg-muted); }
+.ai-thread-working { padding: 10px 12px; }
+.ai-composer { display: flex; flex-direction: column; gap: 9px; }
+.ai-composer textarea { width: 100%; min-height: 90px; resize: vertical; }
+.ai-composer-actions { justify-content: flex-start; }
+.ai-composer-actions .primary-button { min-width: 110px; }
+.ai-context-option { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; line-height: 1.5; cursor: pointer; }
+.ai-context-option input { margin-top: 3px; flex: none; }
+.ai-privacy-note { color: var(--fg-subtle); font-size: 11px; line-height: 1.5; }
+.ai-chat-error { font-size: 12px; line-height: 1.5; color: var(--fg); padding: 10px; border-radius: 8px; box-shadow: var(--neu-inset); }
+.ai-chat-expanded {
+  position: fixed; z-index: 1000; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(1000px, calc(100vw - 40px)); height: min(90dvh, 900px);
+  padding: 22px; overflow-y: auto; border-radius: 18px;
+  color: var(--fg); background: var(--surface); box-shadow: 0 16px 65px rgba(0,0,0,.27);
+}
+.ai-chat-expanded .ai-thread { flex: 1; min-height: 200px; max-height: none; }
+.ai-chat-expanded .ai-composer textarea { min-height: 80px; }
+@media (max-width: 640px) {
+  .ai-chat-expanded { width: 100vw; height: 100dvh; top: 0; left: 0; transform: none; border-radius: 0; padding: 14px; }
+  .ai-turn-user, .ai-turn-assistant { width: 100%; }
+}
