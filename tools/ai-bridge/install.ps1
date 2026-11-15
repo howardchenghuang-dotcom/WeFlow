@@ -58,6 +58,15 @@ Write-Host "node $nodeVersion, npm and git found."
 
 Step 'Bridge dependencies (Electron)'
 Run $bridge 'npm' @('ci')
+# Electron's package no longer downloads its program on install, only the first time it is used through npm.
+# The launcher starts that program directly, so it is fetched here.
+$electron = Join-Path $bridge 'node_modules\electron\dist\electron.exe'
+if (-not (Test-Path -LiteralPath $electron -PathType Leaf)) {
+  Run $bridge 'node' @('node_modules\electron\install.js')
+}
+if (-not (Test-Path -LiteralPath $electron -PathType Leaf)) {
+  throw 'Electron was installed but its program (node_modules\electron\dist\electron.exe) is missing. Check the network and run this again.'
+}
 
 Step 'Sign in with ChatGPT DevKit'
 if (-not (Test-Path -LiteralPath (Join-Path $devkit '.git'))) {
