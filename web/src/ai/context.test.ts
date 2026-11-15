@@ -20,6 +20,19 @@ describe('prepareAiExcerpt', () => {
     expect(result.citations.map(x => x.localId)).toEqual([3]);
     expect(result.truncated).toBe(true);
   });
+  it('keeps the newest message when an old one would consume the character budget', () => {
+    const result = prepareAiExcerpt({
+      sessionId: 'synthetic-chat', start: 0, end: 500, maxCharacters: 100,
+      messages: [
+        { localId: 4, createTime: 120, isSend: 0, senderUsername: 'sender-private', parsedContent: 'x'.repeat(300) },
+        { localId: 5, createTime: 450, isSend: 1, senderUsername: null, parsedContent: 'Latest appointment' },
+      ],
+    });
+    expect(result.prompt).toContain('Latest appointment');
+    expect(result.citations.some(c => c.localId === 5)).toBe(true);
+    expect(result.prompt).not.toContain('sender-private');
+    expect(result.truncated).toBe(true);
+  });
   it('rejects invalid conversation selections', () => {
     expect(() => prepareAiExcerpt({ sessionId: '', start: 0, end: 10, messages })).toThrow();
     expect(() => prepareAiExcerpt({ sessionId: 'chat', start: 10, end: 0, messages })).toThrow();
