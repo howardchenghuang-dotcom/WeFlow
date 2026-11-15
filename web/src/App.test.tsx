@@ -122,7 +122,7 @@ describe('App', () => {
     expect(calls).toContain('/api/chat/statuses?usernames=wxid_a&usernames=g%40chatroom');
     // The first conversation is opened; its details and media are read only once their cards open (#200).
     expect(screen.getByRole('button', { name: '选择林沐' }).getAttribute('aria-pressed')).toBe('true');
-    expect(Array.from(document.querySelectorAll('.card-title'), title => title.textContent)).toEqual(['导出', '任务中心', '搜索', '会话资料', '媒体文件']);
+    expect(Array.from(document.querySelectorAll('.card-title'), title => title.textContent)).toEqual(['导出', '任务中心', 'AI 助手', '搜索', '会话资料', '媒体文件']);
     expect(calls.filter(url => /detail|resources|group\//.test(url))).toEqual([]);
     // the open conversation can be exported on the server (#211)
     expect(screen.getByRole('button', { name: '开始导出' })).toHaveProperty('disabled', false);
