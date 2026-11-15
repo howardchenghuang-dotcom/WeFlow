@@ -1,0 +1,63 @@
+name: Personal WeFlow AI preview checks
+
+on:
+  pull_request:
+    paths:
+      - "tools/ai-bridge/**"
+      - "web/src/ai/**"
+      - "web/src/chat/useChatPage.tsx"
+      - ".github/workflows/personal-ai.yml"
+  push:
+    branches:
+      - "feat/llm-local-chat-analysis"
+    paths:
+      - "tools/ai-bridge/**"
+      - "web/src/ai/**"
+      - "web/src/chat/useChatPage.tsx"
+      - ".github/workflows/personal-ai.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge-guards:
+    name: Bridge guard tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate bridge modules
+        working-directory: tools/ai-bridge
+        shell: pwsh
+        run: |
+          node --check main.mjs
+          node --check guard.mjs
+          node --check panel.js
+          node --check preload.cjs
+      - name: Test local authentication and input bounds
+        working-directory: tools/ai-bridge
+        run: node --test test/*.test.mjs
+
+  webui:
+    name: WebUI typecheck, tests and build
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: web/package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: personal-weflow-ai-webui-windows
+          path: web/dist/
+          retention-days: 7
