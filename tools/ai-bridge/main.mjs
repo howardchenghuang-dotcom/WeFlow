@@ -1,16 +1,23 @@
-import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, shell, Tray } from 'electron';
+import { stopBackend } from './backend.mjs';
 import { AI_PORT } from './guard.mjs';
 import { createBridge } from './server.mjs';
 import { encryptedSessionStore } from './session.mjs';
 
-const bridgeToken = randomBytes(32).toString('base64url');
+const HERE = import.meta.dirname;
+const LAUNCHER = join(HERE, 'launch-weflow-ai.ps1');
+// The backend the launcher starts, two folders up; the tray's Quit ends that program and no other.
+const BACKEND = resolve(HERE, '..', '..', 'preview-bin', 'weflow.exe');
+
 let client;
 let mainWindow;
 let server;
+let tray;
+let quitting = false;
 
 function credentialEncryption() {
   const available = () => safeStorage.isEncryptionAvailable();
@@ -52,16 +59,48 @@ async function confirmPairing({ replacing }) {
 }
 
 function createPanel() {
+  if (mainWindow) { mainWindow.show(); mainWindow.focus(); return; }
   mainWindow = new BrowserWindow({
-    width: 560, height: 440, title: 'WeFlow AI · ChatGPT Pro',
+    width: 560, height: 400, title: 'WeFlow AI · ChatGPT',
     webPreferences: {
       contextIsolation: true, nodeIntegration: false, sandbox: true,
-      preload: join(import.meta.dirname, 'preload.cjs'),
+      preload: join(HERE, 'preload.cjs'),
     },
   });
-  mainWindow.loadFile(join(import.meta.dirname, 'panel.html'));
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.loadFile(join(HERE, 'panel.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+
+/** The launcher knows the token and starts what is not running; the tray only asks it to open the page. */
+function openWebUi() {
+  spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', LAUNCHER], {
+    cwd: HERE, detached: true, stdio: 'ignore', windowsHide: true,
+  }).unref();
+}
+
+async function quit() {
+  if (quitting) return;
+  quitting = true;
+  // 'foreign' and 'absent' are fine: a backend started by hand, or none, is not this program's to end.
+  const stopped = await stopBackend({ exePath: BACKEND });
+  if (stopped === 'failed') console.error('The WeFlow backend on port 18110 could not be stopped.');
+  app.quit();
+}
+
+/** The only visible part of the bridge: without it there is no way to see that it runs, or to stop it. */
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(join(HERE, 'tray.png')));
+  tray.setToolTip('WeFlow AI');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 WeFlow AI', click: openWebUi },
+    { label: 'ChatGPT 连接状态…', click: createPanel },
+    { label: '查看订阅用量', click: () => { void shell.openExternal('https://chatgpt.com/settings/usage'); } },
+    { type: 'separator' },
+    { label: '退出 WeFlow AI（同时停止本机后端）', click: () => { void quit(); } },
+  ]));
+  tray.on('double-click', openWebUi);
 }
 
 function installIpc() {
@@ -77,11 +116,6 @@ function installIpc() {
   });
   ipcMain.handle('bridge-sign-in', async event => { verify(event); return client.signIn(); });
   ipcMain.handle('bridge-disconnect', async event => { verify(event); return client.disconnect(); });
-  ipcMain.handle('bridge-copy-token', async event => {
-    verify(event);
-    await clipboard.writeText(bridgeToken);
-    return true;
-  });
   ipcMain.handle('bridge-open-usage', async event => {
     verify(event);
     await shell.openExternal('https://chatgpt.com/settings/usage');
@@ -90,7 +124,7 @@ function installIpc() {
 
 async function boot() {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows encrypted credential storage is not available');
-  const path = join(import.meta.dirname, 'siwc-devkit', 'packages', 'local', 'dist', 'index.js');
+  const path = join(HERE, 'siwc-devkit', 'packages', 'local', 'dist', 'index.js');
   const sdk = await import(pathToFileURL(path).href);
   client = sdk.createChatGPT({
     appName: 'WeFlow Personal AI',
@@ -116,10 +150,9 @@ async function boot() {
       return safeStorage.decryptString(bytes);
     },
   });
-  const bridge = createBridge({ client, sessionStore, confirmPairing, bridgeToken });
+  const bridge = createBridge({ client, sessionStore, confirmPairing });
   await bridge.restore();
   installIpc();
-  if (process.argv.includes('--show-panel')) createPanel();
   server = createServer(bridge.listener);
   server.on('error', error => {
     const message = error.code === 'EADDRINUSE'
@@ -131,6 +164,9 @@ async function boot() {
   });
   server.listen(AI_PORT, '127.0.0.1', () => {
     console.log('WeFlow AI background bridge ready on 127.0.0.1:' + AI_PORT);
+    // only a bridge that serves gets a tray icon: one that could not listen leaves at once
+    createTray();
+    if (process.argv.includes('--show-panel')) createPanel();
   });
 }
 
@@ -143,6 +179,6 @@ if (!app.requestSingleInstanceLock()) {
     app.quit();
   });
 }
-// The bridge stays running in the background even if the optional diagnostics panel closes.
+// The bridge stays running in the background even if the optional status window closes.
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => server?.close());
+app.on('before-quit', () => { tray?.destroy(); server?.close(); });

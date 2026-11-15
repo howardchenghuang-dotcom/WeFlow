@@ -1,10 +1,11 @@
 // The bridge's HTTP surface, kept free of Electron so that `node --test` can drive it over a real socket.
 // main.mjs supplies the ChatGPT client, the encrypted session store and the native pairing prompt.
-import { AI_PORT, MAX_PROMPT, validBridgeToken, validCompletion, validHost, validOrigin } from './guard.mjs';
+import { AI_PORT, MAX_PROMPT, completionMessages, validHost, validOrigin } from './guard.mjs';
 import { clearSessionCookie, newBrowserSession, sessionCookie, validBrowserSession } from './session.mjs';
 
 export const PAIR_ORIGIN = 'http://127.0.0.1:18110';
 export const COMPLETION_TIMEOUT_MS = 120_000;
+export const MODELS_FRESH_MS = 5 * 60_000;
 // A prompt is at most MAX_PROMPT UTF-16 units; one unit is at most three UTF-8 bytes.
 export const MAX_BODY_BYTES = (MAX_PROMPT + 4096) * 3;
 
@@ -63,21 +64,23 @@ function failure(error) {
  * @param {object} options.sessionStore    `encryptedSessionStore` of session.mjs
  * @param {(info: { replacing: boolean }) => Promise<boolean>} options.confirmPairing
  *        asks the person at this computer, outside the browser, whether a browser may be paired
- * @param {string} options.bridgeToken     secret of the legacy bearer routes
  * @param {number} [options.port]
  */
-export function createBridge({ client, sessionStore, confirmPairing, bridgeToken, port = AI_PORT, log = console.error }) {
+export function createBridge({ client, sessionStore, confirmPairing, port = AI_PORT, log = console.error, now = Date.now }) {
   let browserSession = null;
   let active = false;
   let loginInProgress = false;
   let pairInProgress = false;
+  let listed = null;
 
   const browserAuthorized = req => validBrowserSession(req.headers.cookie, browserSession);
-  const authorized = req => {
-    const bearer = req.headers.authorization;
-    return typeof bearer === 'string' && bearer.startsWith('Bearer ')
-      && validBridgeToken(bearer.slice(7), bridgeToken);
-  };
+  /** The models of the subscription, asked for again after five minutes, a sign-in or a disconnect. */
+  async function models(signal, fresh = false) {
+    if (!fresh && listed && now() - listed.at < MODELS_FRESH_MS) return listed.models;
+    const found = await client.listModels({ signal });
+    listed = { at: now(), models: found };
+    return found;
+  }
   /**
    * Strong origin restriction plus an explicit custom header on every browser request.
    * The cookie is HttpOnly and is never returned to JavaScript. Do not allow
@@ -87,7 +90,8 @@ export function createBridge({ client, sessionStore, confirmPairing, bridgeToken
 
   async function completeRequest(req, res) {
     const data = await bodyJson(req);
-    if (!validCompletion(data)) return respond(res, 400, { error: 'Invalid or oversized AI request' });
+    const messages = completionMessages(data);
+    if (!messages) return respond(res, 400, { error: 'Invalid or oversized AI request' });
     // Checked and taken in one step, with no await between: two requests cannot both pass.
     if (active) return respond(res, 429, { error: 'An AI request is already running', code: 'bridge_busy' });
     active = true;
@@ -95,27 +99,55 @@ export function createBridge({ client, sessionStore, confirmPairing, bridgeToken
     const cancel = new AbortController();
     const onClose = () => { if (!res.writableEnded) cancel.abort(); };
     res.on('close', onClose);
+    // The answer goes out as it is written, one JSON object a line: {"delta": "…"}…, then {"done": true}, or
+    // {"error": "…", "code": "…"} when it breaks off. Until the first piece, a failure is still an HTTP status.
+    let streaming = false;
+    const line = value => {
+      if (res.destroyed || res.writableEnded) return;
+      if (!streaming) {
+        streaming = true;
+        res.writeHead(200, {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        });
+      }
+      res.write(JSON.stringify(value) + '\n');
+    };
     try {
       const auth = await client.getSession();
       if (auth.status !== 'connected' || !auth.sharing) {
+        listed = null;
         return respond(res, 403, { error: 'ChatGPT subscription sharing is not enabled', code: 'sharing_not_enabled' });
       }
-      const available = await client.listModels({ signal: AbortSignal.any([cancel.signal, AbortSignal.timeout(20_000)]) });
+      const available = await models(AbortSignal.any([cancel.signal, AbortSignal.timeout(20_000)]));
       if (!available.some(model => model.slug === data.model)) {
         return respond(res, 400, { error: 'Model is not available to this subscription', code: 'model_not_found' });
       }
       const result = await client.streamResponse({
         model: data.model,
-        input: [
-          { role: 'developer', content: DEVELOPER_PROMPT },
-          { role: 'user', content: data.prompt },
-        ],
+        input: [{ role: 'developer', content: DEVELOPER_PROMPT }, ...messages],
         signal: AbortSignal.any([cancel.signal, AbortSignal.timeout(COMPLETION_TIMEOUT_MS)]),
+        onDelta: delta => { if (delta) line({ delta }); },
       });
-      return respond(res, 200, { text: result.text });
+      // a client that reports no pieces still has its whole text sent
+      if (!streaming && result.text) line({ delta: result.text });
+      line({ done: true });
+      res.end();
+      return undefined;
     } catch (error) {
       if (cancel.signal.aborted) return undefined;
-      if (error?.code === 'cancelled' || error?.name === 'TimeoutError') {
+      const timedOut = error?.code === 'cancelled' || error?.name === 'TimeoutError';
+      if (streaming) {
+        const { body } = timedOut
+          ? { body: { error: 'ChatGPT did not answer in time', code: 'timeout', retryable: true } }
+          : failure(error);
+        if (!timedOut && !body.code) log('AI bridge request failed:', error?.message ?? error);
+        line(body);
+        res.end();
+        return undefined;
+      }
+      if (timedOut) {
         return respond(res, 504, { error: 'ChatGPT did not answer in time', code: 'timeout', retryable: true });
       }
       throw error;
@@ -167,6 +199,7 @@ export function createBridge({ client, sessionStore, confirmPairing, bridgeToken
       if (loginInProgress) return respond(res, 429, { error: 'ChatGPT sign-in already in progress' });
       loginInProgress = true;
       try {
+        listed = null;
         await client.signIn();
         const session = await client.getSession();
         return respond(res, 200, { status: session.status, sharing: Boolean(session.sharing) });
@@ -179,10 +212,11 @@ export function createBridge({ client, sessionStore, confirmPairing, bridgeToken
       if (session.status !== 'connected' || !session.sharing) {
         return respond(res, 403, { error: 'Please sign in and authorize subscription sharing', code: 'sharing_not_enabled' });
       }
-      return respond(res, 200, { models: await client.listModels({ signal: AbortSignal.timeout(20_000) }) });
+      return respond(res, 200, { models: await models(AbortSignal.timeout(20_000), true) });
     }
     if (path === '/ai-auth/complete' && req.method === 'POST') return completeRequest(req, res);
     if (path === '/ai-auth/disconnect' && req.method === 'POST') {
+      listed = null;
       await client.disconnect();
       browserSession = null;
       await sessionStore.clear();
@@ -203,14 +237,8 @@ export function createBridge({ client, sessionStore, confirmPairing, bridgeToken
     if (origin === PAIR_ORIGIN) res.setHeader('Access-Control-Allow-Credentials', 'true');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return undefined; }
     if (req.url?.startsWith('/ai-auth/')) return handleBrowser(req, res);
-    // Legacy API remains usable for prior builds, but the new WebUI never sees a bearer secret.
-    if (!authorized(req)) return respond(res, 401, { error: 'Invalid AI bridge token' });
-    if (req.url === '/health' && req.method === 'GET') return respond(res, 200, { status: 'ok' });
-    if (req.url === '/session' && req.method === 'GET') return respond(res, 200, await client.getSession());
-    if (req.url === '/models' && req.method === 'GET') {
-      return respond(res, 200, { models: await client.listModels({ signal: AbortSignal.timeout(20_000) }) });
-    }
-    if (req.url === '/complete' && req.method === 'POST') return completeRequest(req, res);
+    // The bearer-token routes of the first builds are gone: nothing uses them, and a second way in is a second
+    // thing to keep safe.
     return respond(res, 404, { error: 'Unknown route' });
   }
 
