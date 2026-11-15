@@ -183,7 +183,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       const prompt = buildAiPrompt(text, history, excerpt);
       const data = await bridgeRequest<{ text: string }>('/complete', controller.signal, { model, prompt });
       if (controller.signal.aborted || currentSession.current !== requestSession) return;
-      setTurns(previous => [...previous, {
+      const assistantTurn: AiTurn = {
         id: 'assistant-' + (++turnCounter.current),
         role: 'assistant',
         text: data.text || '模型返回了空白内容。',
@@ -191,7 +191,8 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
         time: Date.now(),
         citations,
         truncated,
-      }].slice(-MAX_VISIBLE_TURNS));
+      };
+      setTurns(previous => [...previous, assistantTurn].slice(-MAX_VISIBLE_TURNS));
     } catch (problem) {
       if (!controller.signal.aborted && currentSession.current === requestSession) {
         setError(problem instanceof Error ? problem.message : 'AI 分析失败，请检查本地桥接程序。');
