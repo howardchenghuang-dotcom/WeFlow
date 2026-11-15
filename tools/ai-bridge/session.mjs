@@ -26,7 +26,7 @@ export function validBrowserSession(cookieHeader, session, now = Date.now()) {
 /**
  * This is a browser pairing lifetime, NOT a guarantee about the model provider's
  * OAuth refresh-token lifetime or subscription eligibility.
- * HttpOnly prevents JavaScript from reading this local-session secret.
+ * HttpOnly prevents JavaScript from reading this local-session secret.\n * Persistence across bridge restarts requires OS-encrypted storage and is not implemented here.
  */
 export function sessionCookie(session) {
   return [
