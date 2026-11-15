@@ -25,7 +25,7 @@ npm start
 3. Keep the 18109 bridge PowerShell running. The bridge runs **without an Electron window** by default. It opens your normal browser during sign-in.
 4. With the existing API v3 server still running on port 18110, **refresh** `http://127.0.0.1:18110/ui/` (use the token-bearing URL supplied by your local backend if it asks).
 5. Choose a WeChat conversation and open the AI card.
-6. Click **启用本机 AI 登录** (first run only); then click **使用 ChatGPT 登录** and complete the official browser authorization. After that the model list loads automatically. You will not need to copy a bridge token.
+6. Click **启用本机 AI 登录** (first run only) and choose **允许** in the small **WeFlow AI** window the bridge opens: a pairing is granted by you at this computer, not by the web page. Then click **使用 ChatGPT 登录** and complete the official browser authorization. After that the model list loads automatically. You will not need to copy a bridge token.
 7. For automatic bridge startup after Windows sign-in, run once from `tools\ai-bridge`:
 
 ```powershell
@@ -41,7 +41,8 @@ The shortcut is created in **the current user's Startup folder**. Delete `WeFlow
 - The underlying OpenAI OAuth refresh tokens are managed by the official local SDK, not by our 90-day cookie. Account revocation, SDK token expiration, subscription changes or provider security checks can require signing in earlier. **This is not a guarantee of 90 days of uninterrupted provider login.**
 - The browser pairing works at **127.0.0.1**, not `localhost`, because the latter is a different cookie site.
 - Disconnect removes the local pairing and invokes the SDK's account disconnect operation.
-- Only explicitly selected text (up to 80 messages, 12,000 characters from the newest 200 entries of the selected session) is sent to the cloud after opt-in.
+- Only explicitly selected text (up to 80 messages, 12,000 characters from the newest 200 entries of the selected session) is sent to the cloud after opt-in. The opt-in covers one question: the box is unticked after each send. Earlier AI answers, which may quote or summarise that text, stay part of the follow-up context until the AI conversation is cleared.
+- Stopping an answer in the page also stops the model request in the bridge.
 
 ## Supported subscriptions
 
@@ -76,6 +77,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-desktop.ps1
 
 This creates a shortcut named **WeFlow AI** on your current Windows desktop (including OneDrive Desktop redirection, where applicable). Double-clicking it checks ports 18110 and 18109, starts the API v3 backend and Electron AI bridge if not running, and opens your normal browser. It leaves the original 18108 service untouched.
 
-**First use:** stop the older manually started 18110 PowerShell backend before double-clicking. The launcher generates a fresh random API token, protects it with Windows DPAPI under `%LOCALAPPDATA%\WeFlow\AI-Launcher\api-token.dpapi`, and reuses it across restarts. If 18110 is already occupied by another manual server, the launcher opens the base URL rather than appending an incorrect token. You can continue using your already authorized browser session, or stop the old server and re-launch to make the shortcut control it.
+**First use:** stop the older manually started 18110 PowerShell backend before double-clicking. The launcher generates a fresh random API token, protects it with Windows DPAPI under `%LOCALAPPDATA%\WeFlow\AI-Launcher\api-token.dpapi`, and reuses it across restarts. If 18110 is already occupied by another program, or by a backend that was started by hand with a different token, the launcher says so and stops: it never sends its token to a server it did not start. Stop that server and double-click again.
 
 This installer does **not** turn 18110 into a Windows startup service. It simply starts components when you double-click. Delete **WeFlow AI.lnk** from the desktop to remove the shortcut.
