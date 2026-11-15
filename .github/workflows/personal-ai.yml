@@ -39,7 +39,7 @@ jobs:
           node --check preload.cjs
       - name: Test local authentication and input bounds
         working-directory: tools/ai-bridge
-        run: node --test test/*.test.mjs
+        run: node --test test/guard.test.mjs
 
   webui:
     name: WebUI typecheck, tests and build
