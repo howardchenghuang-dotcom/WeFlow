@@ -65,6 +65,19 @@ Usage limits and optional paid overage are the provider's. Keep overage/credits 
 - The launcher shows its token only to the backend it started: it checks that the program on 18110 is this checkout's `preview-bin\weflow.exe` and that it accepts the token.
 - The preview backend and a stable WeFlow share one config file and cache (`%APPDATA%\weflow`). They do not share a port.
 
+## Where this comes from
+
+This is a personal fork. Reading WeChat's data, the HTTP API, exports and nearly all of the WebUI are other people's work; the fork adds the AI assistant on top and changes none of the Rust code.
+
+| Layer | Project | Licence |
+|---|---|---|
+| The original WeFlow desktop app | [hicccc77/WeFlow](https://github.com/hicccc77/WeFlow) | CC BY-NC-SA 4.0 |
+| The Rust command-line version of its backend, with the WebUI, which this repository is forked from | [334456777/WeFlow](https://github.com/334456777/WeFlow) | Unlicense |
+| ChatGPT sign-in and requests, cloned at install time and not part of this repository | [openai/sign-in-with-chatgpt-devkit](https://github.com/openai/sign-in-with-chatgpt-devkit) | Sign-in with ChatGPT DevKit Noncommercial License |
+| Added here: `tools/ai-bridge/`, `web/src/ai/`, the AI card's entry in `web/src/chat/useChatPage.tsx`, `.github/workflows/personal-ai.yml` | this fork | as the repository's `LICENSE` |
+
+Two of those licences are noncommercial, so this fork is for personal, noncommercial use: it is not sold, and it is not offered as a hosted service. The fork's `main` branch is kept identical to the upstream it was forked from; the AI assistant lives on the branch `feat/llm-local-chat-analysis`.
+
 ## Development
 
 ```powershell
