@@ -33,6 +33,8 @@ The cloned DevKit is intentionally git-ignored and remains local. Download only 
 
 The installed WeFlow 6.0.0 WebUI will **not** show the new AI card until you build this branch's WebUI. Keep the existing WeFlow process running at `18108`; start the development preview separately on `18110`.
 
+**Backend compatibility:** WeFlow v6.0.0's CLI has API v2. This development branch's WebUI requires API v3, so you **must not** use the v6.0.0 executable for port 18110. Use a newly compiled CLI from this branch or the matching Windows executable from the `personal-weflow-api-v3-windows-x64` GitHub Actions artifact once its build succeeds. Keep the stable v6.0.0 executable untouched.
+
 From the repository root:
 
 ```powershell
@@ -40,7 +42,12 @@ cd web
 bun install --frozen-lockfile
 bun run check
 $previewDir = (Resolve-Path .\dist).Path
-$exe = "$env:LOCALAPPDATA\WeFlow\weflow-v6.0.0-windows-x64\weflow.exe"
+# The preinstalled v6.0.0 executable only supports API v2; the AI WebUI requires API v3.
+# Build the newer CLI from this branch, or download the Windows API v3 binary from
+# the green "Personal WeFlow AI preview checks" workflow artifact.
+cd ..
+cargo build --release -p weflow-cli --target x86_64-pc-windows-msvc
+$exe = (Resolve-Path ".\target\x86_64-pc-windows-msvc\release\weflow.exe").Path
 & $exe serve --host 127.0.0.1 --port 18110 --ui-dir $previewDir
 ```
 
