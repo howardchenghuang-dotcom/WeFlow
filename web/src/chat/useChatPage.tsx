@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ArrowSquareOut, DownloadSimple, FilePdf, MagnifyingGlass } from '@phosphor-icons/react';
 import type { ChatSession } from '../api/chat';
+import { AiCard } from '../ai/AiCard';
 import { lookupMessage, type Resource } from '../api/details';
 import { jobFileUrl } from '../api/jobs';
 import type { SearchHit } from '../api/messages';
@@ -233,6 +234,12 @@ export function useChatPage(shell: Shell, prefs: Preferences, category: Category
       </>,
     },
     {
+      id: 'ai', title: 'AI 助手', summary: 'ChatGPT 订阅 · 仅本地使用',
+      content: selected.live && liveSession
+        ? <AiCard key={scope + ':' + liveSession.username} sessionId={liveSession.username} sessionName={selected.name} />
+        : <p className="card-note">连接 WeFlow 后选择一个真实的微信会话，即可使用 AI 分析。</p>,
+    },
+    {
       id: 'search', title: t('搜索'), summary: selected.live ? searchSummary(liveSearch.state) : submittedQuery === null ? t('当前会话') : t('{n} 条结果', { n: results.length }),
       content: selected.live
         ? <SearchPanel key={scope} session={liveSession} sessions={sessionList} search={liveSearch} onOpenHit={openHit} onJumpDay={jumpToDay} />
@@ -266,7 +273,7 @@ export function useChatPage(shell: Shell, prefs: Preferences, category: Category
     },
   ];
   // nothing to show of a real conversation until one is open
-  const shown = ['export', 'tasks', 'search', 'info', 'media'].filter(id => !(selected.live && !liveSession && (id === 'info' || id === 'media')));
+  const shown = ['export', 'tasks', 'ai', 'search', 'info', 'media'].filter(id => id !== 'ai' ? !(selected.live && !liveSession && (id === 'info' || id === 'media')) : Boolean(selected.live && liveSession && connected));
 
   const view = <BrowserPanel label={t('{category}记录浏览', { category: t(categoryLabels[category]) })} detail={shell.mobileDetail} onBack={() => setMobileDetail(false)}
     back={t('返回对话列表')} title={selected.live ? liveSession?.displayName ?? '' : selected.name} paneLabel={t('{name}的记录', { name: selected.name })} pane={paneRef} detailKey={selected.id || null}
