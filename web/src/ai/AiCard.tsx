@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getMessages } from '../api/messages';
 import { prepareAiExcerpt } from './context';
 
@@ -44,9 +44,12 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [epoch, setEpoch] = useState(0);
+  const activeRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setAnswer(''); setCitations([]); setConsent(false); setError('');
+    activeRequest.current?.abort();
+    setAnswer(''); setCitations([]); setConsent(false); setError(''); setBusy(false);
+    return () => { activeRequest.current?.abort(); };
   }, [sessionId]);
 
   const connect = async () => {
@@ -74,6 +77,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     if (question.length > MAX_QUESTION) { setError('问题文字过长。'); return; }
     setBusy(true); setError(''); setAnswer(''); setCitations([]);
     const controller = new AbortController();
+    activeRequest.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 135_000);
     try {
       // Only the newest 200 entries of the selected conversation are fetched, not the account history.
@@ -93,7 +97,10 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       setError(problem instanceof Error ? problem.message : 'AI 分析失败，请检查本地桥接程序。');
     } finally {
       window.clearTimeout(timeout);
-      setBusy(false);
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setBusy(false);
+      }
     }
   };
 
