@@ -5,6 +5,7 @@ import { validBridgeToken, validCompletion, validHost, validOrigin, MAX_PROMPT }
 describe('local AI bridge request guards', () => {
   it('blocks other origins and DNS rebinding hosts', () => {
     assert.equal(validOrigin('http://127.0.0.1:18108'), true);
+    assert.equal(validOrigin('http://127.0.0.1:18110'), true);
     assert.equal(validOrigin('https://attacker.example'), false);
     assert.equal(validHost('localhost:18109'), true);
     assert.equal(validHost('evil.example:18109'), false);
