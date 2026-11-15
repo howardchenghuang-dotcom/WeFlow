@@ -8,8 +8,8 @@ export const AI_ORIGINS = new Set([
 ]);
 export const MAX_PROMPT = 28_000;
 
-export function validHost(host) {
-  return host === `127.0.0.1:${AI_PORT}` || host === `localhost:${AI_PORT}`;
+export function validHost(host, port = AI_PORT) {
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
 }
 
 export function validOrigin(origin) {

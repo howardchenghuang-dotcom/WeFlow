@@ -29,17 +29,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # One command, so that its exit code is the step's: pwsh goes on after a failed line of a
+      # multi-line script, and a syntax error in main.mjs once passed this step unnoticed.
       - name: Validate bridge modules
+        working-directory: tools/ai-bridge
+        run: npm run check
+      - name: Test local authentication, pairing, cancellation and input bounds
+        working-directory: tools/ai-bridge
+        run: npm test
+      - name: Parse the Windows launcher scripts
         working-directory: tools/ai-bridge
         shell: pwsh
         run: |
-          node --check main.mjs
-          node --check guard.mjs
-          node --check panel.js
-          node --check preload.cjs
-      - name: Test local authentication and input bounds
-        working-directory: tools/ai-bridge
-        run: node --test test/guard.test.mjs test/session.test.mjs
+          $failed = $false
+          foreach ($script in Get-ChildItem -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Host "$($script.Name): $_" } }
+          }
+          if ($failed) { exit 1 }
 
   webui:
     name: WebUI typecheck, tests and build

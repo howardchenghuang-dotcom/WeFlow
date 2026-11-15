@@ -6,7 +6,8 @@
   "main": "main.mjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/guard.test.mjs test/session.test.mjs"
+    "test": "node --test test/guard.test.mjs test/session.test.mjs test/server.test.mjs",
+    "check": "node --check main.mjs && node --check server.mjs && node --check guard.mjs && node --check session.mjs && node --check panel.js && node --check preload.cjs"
   },
   "engines": {
     "node": ">=22.12.0"
