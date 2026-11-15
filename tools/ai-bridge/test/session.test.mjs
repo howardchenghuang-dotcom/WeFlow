@@ -5,7 +5,7 @@ import {
   trustedPairRequest, validBrowserSession,
 } from '../session.mjs';
 
-describe('90-day locally encrypted browser pairing', () => {
+describe('90-day browser pairing expiration rules', () => {
   it('has a bounded ninety-day lifetime, never an unlimited login', () => {
     const now = 1000000;
     const session = newBrowserSession(now);
