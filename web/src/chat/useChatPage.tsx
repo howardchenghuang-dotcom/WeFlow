@@ -236,7 +236,7 @@ export function useChatPage(shell: Shell, prefs: Preferences, category: Category
     {
       id: 'ai', title: 'AI 助手', summary: 'ChatGPT 订阅 · 仅本地使用',
       content: selected.live && liveSession
-        ? <AiCard key={scope + ':' + liveSession.username} sessionId={liveSession.username} sessionName={selected.name} />
+        ? <AiCard key={scope} sessionId={liveSession.username} sessionName={selected.name} />
         : <p className="card-note">连接 WeFlow 后选择一个真实的微信会话，即可使用 AI 分析。</p>,
     },
     {
