@@ -7,19 +7,20 @@ const BRIDGE = 'http://127.0.0.1:18109';
 const MAX_QUESTION = 800;
 
 type Model = { slug: string; displayName: string };
-type CloudState = { status: string; sharing: boolean };
+type CloudState = { paired: boolean; expiresAt?: number; status?: string; sharing?: boolean };
 
-async function bridgeRequest<T>(path: string, bridgeToken: string, signal: AbortSignal, body?: object): Promise<T> {
-  const response = await fetch(BRIDGE + path, {
+async function bridgeRequest<T>(path: string, signal: AbortSignal, body?: object): Promise<T> {
+  const response = await fetch(BRIDGE + '/ai-auth' + path, {
     method: body ? 'POST' : 'GET',
+    credentials: 'include',
     headers: {
-      Authorization: 'Bearer ' + bridgeToken,
+      'X-WeFlow-AI-Request': '1',
       ...(body ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal,
   });
-  if (!response.ok) throw new Error('AI 本地桥接失败（HTTP ' + response.status + '）');
+  if (!response.ok) throw new Error('AI 本地授权失败（HTTP ' + response.status + '）');
   return await response.json() as T;
 }
 
@@ -27,12 +28,12 @@ function fromDate(days: number): number {
   return Math.floor(Date.now() / 1000) - days * 86400;
 }
 
-/**
- * This card is intentionally not an OAuth client. Authentication belongs only to the trusted
- * Electron bridge process. A manually copied bridge token is held in component memory, not stored.
- */
+/** ChatGPT credentials are retained by the encrypted local service, never by this React UI. */
 export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionName: string }) {
-  const [bridgeToken, setBridgeToken] = useState('');
+  const [paired, setPaired] = useState(false);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [serviceReady, setServiceReady] = useState(false);
   const [model, setModel] = useState('');
   const [models, setModels] = useState<Model[]>([]);
   const [connected, setConnected] = useState(false);
@@ -53,24 +54,73 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     return () => { activeRequest.current?.abort(); };
   }, [sessionId]);
 
-  const connect = async () => {
-    setError('');
-    setConnected(false);
+  const refreshSession = async (signal: AbortSignal) => {
+    const session = await bridgeRequest<CloudState>('/session', signal);
+    setPaired(session.paired);
+    setExpiresAt(session.expiresAt ?? null);
+    setServiceReady(true);
+    if (!session.paired || session.status !== 'connected' || !session.sharing) {
+      setConnected(false);
+      setModels([]);
+      return;
+    }
+    const result = await bridgeRequest<{ models: Model[] }>('/models', signal);
+    if (!result.models.length) throw new Error('当前订阅未返回可用模型。');
+    setModels(result.models);
+    setModel(previous => result.models.some(item => item.slug === previous) ? previous : result.models[0].slug);
+    setConnected(true);
+    setEpoch(value => value + 1);
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    // Probe the local background service without exposing bearer tokens.
+    if (window.location.hostname !== '127.0.0.1' || window.location.port !== '18110') {
+      setError('请使用 http://127.0.0.1:18110/ui/ 访问 AI 登录页面。');
+      return () => controller.abort();
+    }
+    void refreshSession(controller.signal).catch(() => {
+      if (!controller.signal.aborted) {
+        setServiceReady(false);
+        setError('AI 后台服务未运行。请在 tools/ai-bridge 目录执行 npm start。');
+      }
+    });
+    return () => controller.abort();
+  }, []);
+
+  const pair = async () => {
+    setAuthBusy(true); setError('');
     const controller = new AbortController();
     try {
-      const session = await bridgeRequest<CloudState>('/session', bridgeToken.trim(), controller.signal);
-      if (session.status !== 'connected' || !session.sharing) {
-        throw new Error('请先在 WeFlow AI 桥接窗口中使用 ChatGPT 登录并授权订阅共享。');
-      }
-      const result = await bridgeRequest<{ models: Model[] }>('/models', bridgeToken.trim(), controller.signal);
-      if (!result.models.length) throw new Error('当前订阅未返回可用模型。');
-      setModels(result.models);
-      setModel(result.models[0].slug);
-      setConnected(true);
-      setEpoch(value => value + 1);
+      await bridgeRequest('/pair', controller.signal, {});
+      await refreshSession(controller.signal);
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : '本地 AI 桥接未连接。');
-    }
+      setError(problem instanceof Error ? problem.message : '本机配对失败。');
+    } finally { setAuthBusy(false); }
+  };
+
+  const signIn = async () => {
+    setAuthBusy(true); setError('');
+    const controller = new AbortController();
+    try {
+      // The Windows background service opens the official OpenAI sign-in page.
+      await bridgeRequest('/sign-in', controller.signal, {});
+      await refreshSession(controller.signal);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : 'ChatGPT 登录失败，请确认授权窗口。');
+    } finally { setAuthBusy(false); }
+  };
+
+  const disconnect = async () => {
+    setAuthBusy(true); setError('');
+    const controller = new AbortController();
+    try {
+      await bridgeRequest('/disconnect', controller.signal, {});
+      setPaired(false); setConnected(false); setModels([]); setModel('');
+      setExpiresAt(null); setConsent(false);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : '断开连接失败。');
+    } finally { setAuthBusy(false); }
   };
 
   const ask = async () => {
@@ -90,7 +140,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       });
       if (!result.citations.length) throw new Error('选定时间内最近的记录没有可分析的文本消息。');
       const prompt = result.prompt + '\n\nUSER QUESTION: ' + question.trim();
-      const data = await bridgeRequest<{ text: string }>('/complete', bridgeToken.trim(), controller.signal, { model, prompt });
+      const data = await bridgeRequest<{ text: string }>('/complete', controller.signal, { model, prompt });
       setAnswer(data.text);
       setCitations(result.citations);
       setTruncated(result.truncated || messages.length >= 200);
@@ -116,15 +166,19 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       </select>
     </div>
     <p className="card-note">目前仅 ChatGPT 支持本工具的订阅登录。Claude、Gemini、GLM、Kimi 已纳入模型目录，待官方授权方式验证后才会开放。</p>
-    <p className="card-note">请先在 Windows 启动 WeFlow AI 桥接程序并通过 ChatGPT 订阅登录；仅在你点击“分析”时发送所选聊天片段。</p>
-    {!connected && <>
-      <div className="form-row"><label className="field-label" htmlFor="ai-bridge-token">本地桥接令牌</label>
-        <input id="ai-bridge-token" type="password" autoComplete="off" value={bridgeToken}
-          placeholder="在 AI 桥接窗口复制" onChange={e => setBridgeToken(e.target.value)} /></div>
-      <button type="button" className="secondary-button" onClick={() => void connect()} disabled={!bridgeToken.trim()}>连接本地 AI 桥接</button>
+    <p className="card-note">登录在本地加密后台完成，无需复制令牌。仅在你点击“分析”时发送选定的文字聊天片段。</p>
+    {!serviceReady && <p className="card-note">AI 本地后台未连接。请运行 tools/ai-bridge 目录中的 npm start。</p>}
+    {serviceReady && !paired && <button type="button" className="secondary-button"
+      disabled={authBusy} onClick={() => void pair()}>启用本机 AI 登录（最长保留 90 天）</button>}
+    {serviceReady && paired && !connected && <>
+      <p className="card-note">本机已配对。点击下方按钮会打开 OpenAI 官方登录页面，完成订阅共享授权。</p>
+      <button type="button" className="primary-button" disabled={authBusy}
+        onClick={() => void signIn()}>{authBusy ? '等待授权…' : '使用 ChatGPT 登录'}</button>
     </>}
+    {serviceReady && paired && <p className="card-note">本机配对有效期：{expiresAt ? new Date(expiresAt).toLocaleDateString() : '未获取'}。云端账号如提前失效，仍需重新登录。</p>}
     {connected && <>
       <p className="card-note" role="status">ChatGPT 订阅已连接（连接 #{epoch}）</p>
+      <button type="button" className="secondary-button" disabled={authBusy} onClick={() => void disconnect()}>断开 ChatGPT 并清除本机配对</button>
       <div className="form-row"><label className="field-label" htmlFor="ai-model">模型</label>
         <select id="ai-model" value={model} onChange={e => setModel(e.target.value)}>
           {models.map(item => <option key={item.slug} value={item.slug}>{item.displayName}</option>)}
