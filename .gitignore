@@ -80,3 +80,7 @@ __pycache__/
 
 # docs: wiki
 /wiki/
+
+# Personal AI bridge: official DevKit cloned locally; never commit its files or credentials
+/tools/ai-bridge/siwc-devkit/
+/tools/ai-bridge/.env*
