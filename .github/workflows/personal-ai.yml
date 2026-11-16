@@ -1,7 +1,11 @@
 name: Personal WeFlow AI preview checks
 
 on:
+  # Pull requests into the development branch. The pull request from that branch into main is not listed: its
+  # commits are the branch's own, already checked by the push below, and listing it built every commit twice.
   pull_request:
+    branches:
+      - "feat/llm-local-chat-analysis"
     paths:
       - "tools/ai-bridge/**"
       - "web/src/ai/**"
@@ -21,6 +25,12 @@ on:
 
 permissions:
   contents: read
+
+# A newer commit replaces the run of the one before it on the same branch or pull request: a day of small
+# commits made over a hundred runs, most of them of commits already superseded.
+concurrency:
+  group: personal-ai-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   bridge-guards:
