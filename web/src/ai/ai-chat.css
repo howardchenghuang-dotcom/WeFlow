@@ -120,3 +120,9 @@
 .md table { border-collapse: collapse; font-size: 12px; }
 .md th, .md td { padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--fg-subtle) 40%, transparent); text-align: left; vertical-align: top; }
 .md th { font-weight: 600; }
+
+/* choosing what goes with a question */
+.ai-pick { display: flex; flex-wrap: wrap; gap: 8px 12px; flex-basis: 100%; }
+.ai-pick label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ai-pick input[type="text"] { width: 150px; }
+.ai-turn-scope { font-weight: 600; }

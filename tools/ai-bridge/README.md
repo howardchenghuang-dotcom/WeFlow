@@ -34,7 +34,12 @@ Backend builds are kept on GitHub for 90 days. If none is left, the installer pr
 ## What is sent to the cloud
 
 - **Your question and the earlier turns of the AI conversation** (at most 8,000 characters of them) go to OpenAI with every question. Earlier answers may quote chat text the AI was given.
-- **WeChat text goes only when you tick "本轮附带这个会话的微信聊天片段"**, and only for that one question: the box unticks itself after each send, and the send button says when it is attached. It is the latest 30, 80 or 150 text messages of the open conversation, at most 16,000 characters. No pictures, voice, files, other conversations or WeChat IDs; in a group, the others are sent as "Member 1", "Member 2".
+- **WeChat text goes only when you tick "本轮附带这个会话的微信聊天片段"**, and only for that one question: the box unticks itself after each send, and the send button says when it is attached. At most 150 text messages of the open conversation, 16,000 characters. No pictures, voice, files, other conversations or WeChat IDs; in a group, the others are sent as "Member 1", "Member 2".
+- **Which messages** is chosen in the menu under the box:
+  - **自动** (the default): name the time or the topic in the question ("上周聊了什么", "他是怎么说合同的"). The question and the earlier AI turns, with no chat text, are first sent with the request "which part should be read?"; the model answers with dates and/or a keyword, the page checks that answer and reads that part from the local backend. This costs one extra model request per question. When nothing is found there, the latest messages are read instead and the answer says so.
+  - **最近的消息**: the latest 30, 80 or 150 text messages.
+  - **指定日期或关键词**: a date range, a keyword, or both, filled in by you. A keyword attaches the messages that hold it (the newest thirty) with the two before and after each.
+- Under each answer, "本轮读取" says which messages went with it. A period that holds more than 150 messages is read from its beginning; the answer says up to when, and you ask for the rest by naming the remaining dates.
 - Requests are made with `store: false`. The AI conversation lives in the page only and is gone on reload. The bridge logs no prompt text.
 - The ChatGPT credentials stay in the bridge, encrypted with Windows `safeStorage`. The local backend's access token stays between the launcher, the browser tab and port 18110.
 

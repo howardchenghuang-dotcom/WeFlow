@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '#test';
 import { AiCard } from './AiCard';
 
 type Message = { role: string; content: string };
-type Call = { url: string; method: string; body: { model: string; messages: Message[] } | null; signal: AbortSignal | null };
+type Call = { url: string; method: string; body: { model: string; messages: Message[]; purpose?: string } | null; signal: AbortSignal | null };
 type Answer = Response | Promise<Response>;
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
@@ -23,7 +23,9 @@ let calls: Call[] = [];
 let session: () => Answer = () => json({ paired: true, expiresAt: Date.now() + 1000, status: 'connected', sharing: true });
 let complete: (call: Call) => Answer = () => answer('回答一');
 let messages: (call: Call) => Answer = () => json({ success: true, data: wechat });
-const completions = () => calls.filter(call => call.url.endsWith('/ai-auth/complete'));
+// With WeChat text ticked, the card first asks where to read (`purpose: "plan"`). Here that is always answered
+// with "the latest messages"; AiCard.modes.test.tsx is about what else it can answer.
+const completions = () => calls.filter(call => call.url.endsWith('/ai-auth/complete') && call.body?.purpose !== 'plan');
 const messageReads = () => calls.filter(call => call.url.includes('api/chat/messages'));
 const last = (call: Call) => call.body!.messages[call.body!.messages.length - 1].content;
 const address = (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM;
@@ -40,9 +42,11 @@ beforeEach(() => {
     calls.push(call);
     if (url.endsWith('/ai-auth/session')) return Promise.resolve(session());
     if (url.endsWith('/ai-auth/models')) return Promise.resolve(json({ models: [{ slug: 'm1', displayName: 'Model One' }, { slug: 'm2', displayName: 'Model Two' }] }));
+    if (url.endsWith('/ai-auth/complete') && call.body?.purpose === 'plan') return Promise.resolve(answer('{"from":null,"to":null,"keyword":null}'));
     if (url.endsWith('/ai-auth/complete')) return Promise.resolve(complete(call));
     if (url.endsWith('/ai-auth/pair') || url.endsWith('/ai-auth/sign-in')) return Promise.resolve(json({}));
     if (url.includes('api/chat/messages')) return Promise.resolve(messages(call));
+    if (url.includes('api/chat/date-counts')) return Promise.resolve(json({ success: true, data: { counts: {} } }));
     return Promise.reject(new Error('unexpected request ' + url));
   }));
 });

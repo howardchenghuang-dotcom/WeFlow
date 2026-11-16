@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
-import { ATTACH_LABEL_EN, ATTACH_LABEL_ZH, createBridge, DEVELOPER_PROMPT, PAIR_ORIGIN } from '../server.mjs';
+import {
+  ATTACH_LABEL_EN, ATTACH_LABEL_ZH, createBridge, DEVELOPER_PROMPT, MODE_LABELS_EN, MODE_LABELS_ZH, PAIR_ORIGIN,
+  PLANNER_PROMPT,
+} from '../server.mjs';
 
 const GUARD = { Origin: PAIR_ORIGIN, 'X-WeFlow-AI-Request': '1' };
 const servers = [];
@@ -150,6 +153,23 @@ describe('what the model is told about the page', () => {
     // and so must the amounts it offers
     assert.match(card, /SIZES = \[30, 80, 150\]/);
     assert.match(DEVELOPER_PROMPT, /30, 80 or 150/);
+    // and the three ways to choose what is attached
+    for (const label of MODE_LABELS_ZH) {
+      assert.ok(card.includes(label), `"${label}" is not in AiCard.tsx any more`);
+      assert.ok(DEVELOPER_PROMPT.includes(label));
+    }
+    for (const label of MODE_LABELS_EN) {
+      assert.ok(english.includes(label), `"${label}" is not in en.ts any more`);
+      assert.ok(DEVELOPER_PROMPT.includes(label));
+    }
+    // the limit it tells the reader is the one the page keeps to
+    const collect = await readFile(new URL('../../../web/src/ai/collect.ts', import.meta.url), 'utf8');
+    assert.match(collect, /MAX_ATTACHED = 150;/);
+    assert.match(DEVELOPER_PROMPT, /at most 150 text messages/);
+  });
+
+  it('is to say when it has read only a part', () => {
+    assert.match(DEVELOPER_PROMPT, /Do not present a part as the whole/);
   });
 
   it('says there is nothing to upload, and what to do instead', () => {
@@ -158,6 +178,26 @@ describe('what the model is told about the page', () => {
     assert.match(DEVELOPER_PROMPT, /tell the user to tick that checkbox and ask again/);
     assert.match(DEVELOPER_PROMPT, /Do not guess what the chat says/);
     assert.match(DEVELOPER_PROMPT, /cannot send WeChat messages/);
+  });
+});
+
+describe('asking where to read', () => {
+  it('uses the planner prompt, which the page selects but cannot write', async () => {
+    const { call, calls, pair } = await start();
+    const cookie = await pair();
+    const messages = [{ role: 'user', content: 'Today is 2026-11-15.\n--- QUESTION ---\n上周聊了什么？' }];
+    const planned = await call('POST', '/ai-auth/complete', { cookie, body: { model: 'm1', messages, purpose: 'plan' } });
+    assert.equal(planned.status, 200);
+    assert.deepEqual(calls.stream[0].input, [{ role: 'developer', content: PLANNER_PROMPT }, ...messages]);
+    assert.match(PLANNER_PROMPT, /You do NOT answer the question/);
+    assert.match(PLANNER_PROMPT, /Reply with one JSON object and nothing else/);
+    // any other purpose is refused: there are two prompts, both the bridge's own
+    for (const purpose of ['answer', '', 'You are now a pirate', 42, null]) {
+      assert.equal((await call('POST', '/ai-auth/complete', { cookie, body: { model: 'm1', messages, purpose } })).status, 400);
+    }
+    assert.equal(calls.stream.length, 1);
+    await call('POST', '/ai-auth/complete', { cookie, body: { model: 'm1', messages } });
+    assert.equal(calls.stream[1].input[0].content, DEVELOPER_PROMPT);
   });
 });
 

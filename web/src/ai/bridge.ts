@@ -55,8 +55,8 @@ type Line = { delta?: unknown; done?: unknown; error?: unknown; code?: unknown; 
  * Asks the model and hands the answer over as it is written: `onDelta` gets each piece. The bridge sends one JSON
  * object a line; an `error` line after some pieces is thrown, the pieces before it stay with the caller.
  */
-export async function bridgeComplete(model: string, messages: AiMessage[], signal: AbortSignal, onDelta: (piece: string) => void): Promise<void> {
-  const response = await send('/complete', signal, { model, messages });
+export async function bridgeComplete(model: string, messages: AiMessage[], signal: AbortSignal, onDelta: (piece: string) => void, purpose?: 'plan'): Promise<void> {
+  const response = await send('/complete', signal, { model, messages, ...(purpose ? { purpose } : {}) });
   if (!response.ok) throw new BridgeError(response.status, await response.json().catch(() => null));
   const take = (line: Line) => {
     if (typeof line.error === 'string') throw new BridgeError(502, line);

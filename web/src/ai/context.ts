@@ -24,6 +24,19 @@ export interface ExcerptOptions {
   maxCharacters?: number;
   /** Marks where the excerpt begins and ends; a random one by default, so that no message can forge the end. */
   marker?: string;
+  /**
+   * Which messages stay when there are more than fit: the newest (the default), or the oldest, for a period that
+   * is read from its beginning.
+   */
+  keep?: 'newest' | 'oldest';
+  /** Lines for the model about how the messages were chosen (a period, a keyword), put before the excerpt. */
+  notes?: readonly string[];
+  /**
+   * Set for messages chosen by a period or a keyword: true when what was asked for held more than was read.
+   * Then, or when not all of it fits here, the excerpt says that it is only a part and from when to when it
+   * reaches. Left unset for "the latest messages": of those there are always older ones.
+   */
+  partial?: boolean;
 }
 
 function randomMarker(): string {
@@ -45,7 +58,8 @@ export function prepareAiExcerpt(options: ExcerptOptions): AiExcerpt {
     .filter(m => typeof m.parsedContent === 'string' && m.parsedContent.trim())
     .sort((a, b) => a.createTime - b.createTime || a.localId - b.localId);
 
-  const selected = candidates.slice(-maxMessages);
+  const oldestFirst = options.keep === 'oldest';
+  const selected = oldestFirst ? candidates.slice(0, maxMessages) : candidates.slice(-maxMessages);
   // In a group, who said what matters. The account names stay on this computer: each member is numbered in the
   // order they first speak in the excerpt, and the same member keeps the same number throughout.
   const group = sessionId.endsWith('@chatroom');
@@ -68,7 +82,8 @@ export function prepareAiExcerpt(options: ExcerptOptions): AiExcerpt {
   let truncated = candidates.length > selected.length;
   // Budget newest messages first, then restore chronological order in the prompt.
   // Otherwise a long older message can crowd out all recent conversations.
-  for (const { message, sender } of [...labelled].reverse()) {
+  // (A period read from its beginning is budgeted from that end instead.)
+  for (const { message, sender } of oldestFirst ? labelled : [...labelled].reverse()) {
     const tag = `[${message.localId}@${message.createTime}]`;
     const line = `${tag} ${sender}: ${message.parsedContent.trim()}`;
     const left = maxCharacters - size;
@@ -79,9 +94,19 @@ export function prepareAiExcerpt(options: ExcerptOptions): AiExcerpt {
     citations.push({ localId: message.localId, createTime: message.createTime, sender });
     if (accepted.length < line.length) { truncated = true; break; }
   }
-  lines.reverse();
-  citations.reverse();
+  if (!oldestFirst) {
+    lines.reverse();
+    citations.reverse();
+  }
 
+  const stamp = (seconds: number) => {
+    const at = new Date(seconds * 1000);
+    const two = (n: number) => String(n).padStart(2, '0');
+    return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}:${two(at.getMinutes())}`;
+  };
+  const part = options.partial !== undefined && (options.partial || truncated) && citations.length
+    ? [`This excerpt is only PART of what was asked for: it holds ${citations.length} messages, from ${stamp(citations[0].createTime)} to ${stamp(citations[citations.length - 1].createTime)} (local time). More messages were left out because of the size limit.`]
+    : [];
   return {
     sessionId, start, end, citations, truncated,
     prompt: [
@@ -90,6 +115,8 @@ export function prepareAiExcerpt(options: ExcerptOptions): AiExcerpt {
       'Cite evidence using the [localId@timestamp] labels. If evidence is insufficient, say so.',
       group ? 'This is a group chat: "Me" is the user, "Member N" are the other people, numbered in order of appearance.'
         : '"Me" is the user and "Other" is the person they are talking to.',
+      ...(options.notes ?? []),
+      ...part,
       `The excerpt ends only at the line "--- END CHAT EXCERPT ${marker} ---".`,
       `--- BEGIN CHAT EXCERPT ${marker} ---`,
       ...lines,

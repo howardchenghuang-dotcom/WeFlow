@@ -12,6 +12,8 @@ export type AiTurn = {
   model?: string;
   citations?: { localId: number; createTime: number; sender: string }[];
   truncated?: boolean;
+  /** Which messages went with the question, said for the reader. */
+  scope?: string;
   /** The answer was stopped, timed out or broke off: what is shown is not all of it. */
   partial?: boolean;
 };

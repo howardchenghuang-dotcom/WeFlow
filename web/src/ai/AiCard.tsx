@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { getMessages, type PageFrom, type ParsedMessage } from '../api/messages';
+import { getDateCounts } from '../api/messages';
 import { t } from '../i18n';
 import { BridgeError, bridgeComplete, bridgeRequest } from './bridge';
 import { buildAiMessages, MAX_QUESTION, MAX_VISIBLE_TURNS, type AiTurn } from './chatHistory';
+import { collectKeyword, collectRange, collectRecent, MAX_ATTACHED, type Collected } from './collect';
 import { prepareAiExcerpt } from './context';
 import { Markdown } from './Markdown';
+import { dayEnd, dayOf, dayStart, parsePlan, planRequest, type Plan } from './plan';
 import { PROVIDERS } from './providers';
 import './ai-chat.css';
 
 export { BridgeError } from './bridge';
 
-const PAGE = 200;
-const MAX_PAGES = 3;
 const SIZES = [30, 80, 150] as const;
 const TIMEOUT_MS = 135_000;
 
@@ -19,24 +19,63 @@ type Model = { slug: string; displayName: string };
 type CloudState = { paired: boolean; expiresAt?: number; status?: string; sharing?: boolean };
 /** `checking` until the bridge has answered once; `elsewhere` when the page is not the one the bridge pairs with. */
 type Service = 'checking' | 'ready' | 'offline' | 'elsewhere';
+/** How the messages that go with a question are chosen: by the question itself, the latest ones, or as filled in. */
+type Mode = 'auto' | 'recent' | 'pick';
+/** What a request is doing, for the line the reader sees while waiting. */
+type Stage = '' | 'planning' | 'reading' | 'answering';
+/** The first and the last day a conversation has messages on (`YYYY-MM-DD`). */
+type Span = { first: string; last: string };
+
+async function daySpan(sessionId: string, signal: AbortSignal): Promise<Span | null> {
+  const days = Object.keys(await getDateCounts(sessionId, signal)).filter(day => dayStart(day) !== null).sort();
+  return days.length ? { first: days[0], last: days[days.length - 1] } : null;
+}
+
+const day = (seconds: number) => dayOf(new Date(seconds * 1000));
 
 /**
- * The newest text messages of a conversation: pages of 200 are read, newest first, until `want` of them are text
- * or three pages are read. `more` says older messages were left unread.
+ * Reads what a plan asks for from the local backend: the messages holding a keyword, those of a period, or the
+ * latest ones. `notes` tell the model how they were chosen, `describe` tells the reader. When the question itself
+ * chose (`fallback`) and nothing is there, the latest messages are read instead and both are told so; a reader
+ * who filled the fields in is told nothing was found.
  */
-async function recentTexts(sessionId: string, want: number, signal: AbortSignal) {
-  const texts: ParsedMessage[] = [];
-  let from: PageFrom = null;
-  let more = false;
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const batch = await getMessages(sessionId, from, signal, PAGE);
-    texts.push(...batch.filter(item => item.localType === 1));
-    more = batch.length >= PAGE;
-    if (!more || texts.length >= want) break;
-    const oldest = batch.reduce((a, b) => (b.createTime < a.createTime || (b.createTime === a.createTime && b.localId < a.localId) ? b : a));
-    from = { before: oldest._cursor };
+async function gather(sessionId: string, plan: Plan, size: number, fallback: boolean, signal: AbortSignal): Promise<{
+  collected: Collected; limit: number; keep: 'newest' | 'oldest'; notes: string[]; chosen: boolean; describe: (count: number) => string;
+}> {
+  const period = plan.start !== undefined && plan.end !== undefined;
+  const [from, to] = period ? [plan.start ? day(plan.start) : '', day(plan.end!)] : ['', ''];
+  const dates = !period ? '' : from ? t('{from} 至 {to}', { from, to }) : t('{to} 及之前', { to });
+  const span = !period ? '' : `sent ${from ? 'from ' + from + ' ' : ''}up to ${to} (local dates)`;
+  const word = plan.keyword?.replace(/"/g, "'") ?? '';
+  let nothing = '';
+  if (word) {
+    const collected = await collectKeyword(sessionId, word, plan.start ?? 0, plan.end ?? 0, signal);
+    if (collected.texts.length) {
+      return {
+        collected, limit: MAX_ATTACHED, keep: 'newest', chosen: true,
+        notes: [`These are the messages that contain "${word}"${period ? ' and were ' + span : ''} (the newest matches when there are many), each with up to two messages before and after it. Messages between these groups are left out.`],
+        describe: count => (period ? t('{dates}含「{keyword}」的消息及其前后文，共 {n} 条', { dates, keyword: word, n: count }) : t('含「{keyword}」的消息及其前后文，共 {n} 条', { keyword: word, n: count })),
+      };
+    }
+    nothing = period ? t('{dates}没有找到含「{keyword}」的文字消息', { dates, keyword: word }) : t('没有找到含「{keyword}」的文字消息', { keyword: word });
+  } else if (period) {
+    const collected = await collectRange(sessionId, plan.start!, plan.end!, MAX_ATTACHED, signal);
+    if (collected.texts.length) {
+      return {
+        collected, limit: MAX_ATTACHED, keep: 'oldest', chosen: true,
+        notes: [`These are the messages ${span}, read from the beginning of that period.`],
+        describe: count => t('{dates}的消息，共 {n} 条', { dates, n: count }),
+      };
+    }
+    nothing = t('{dates}没有文字消息', { dates });
   }
-  return { texts, more };
+  if (nothing && !fallback) throw new Error(nothing);
+  const collected = await collectRecent(sessionId, size, signal);
+  return {
+    collected, limit: size, keep: 'newest', chosen: false,
+    notes: nothing ? ['Nothing was found for the period or keyword the question pointed to, so these are the latest messages of the conversation instead. Say so in your answer.'] : [],
+    describe: count => (nothing ? t('{nothing}，改为最近的 {n} 条文字消息', { nothing, n: count }) : t('最近的 {n} 条文字消息', { n: count })),
+  };
 }
 
 /** `Me`, `Other` and `Member 3` of an excerpt, in the page's language. */
@@ -57,6 +96,12 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
   const [models, setModels] = useState<Model[]>([]);
   const [connected, setConnected] = useState(false);
   const [size, setSize] = useState<number>(80);
+  const [mode, setMode] = useState<Mode>('auto');
+  const [fromDay, setFromDay] = useState('');
+  const [toDay, setToDay] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [span, setSpan] = useState<Span | null>(null);
+  const [stage, setStage] = useState<Stage>('');
   const [question, setQuestion] = useState('');
   const [includeExcerpt, setIncludeExcerpt] = useState(false);
   const [turns, setTurns] = useState<AiTurn[]>([]);
@@ -78,11 +123,23 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     setTurns([]);
     setQuestion('');
     setIncludeExcerpt(false);
+    setFromDay(''); setToDay(''); setKeyword('');
+    setSpan(null);
+    setStage('');
     setError('');
     setBusy(false);
     following.current = true;
     return () => { activeRequest.current?.abort(); };
   }, [sessionId]);
+
+  // The days this conversation has messages on: asked for once the reader means to attach some, to bound the
+  // date fields and to tell the planner. Read from the local backend; nothing of it is sent before a question is.
+  useEffect(() => {
+    if (!includeExcerpt || span) return;
+    const controller = new AbortController();
+    void daySpan(sessionId, controller.signal).then(found => { if (!controller.signal.aborted) setSpan(found); }, () => {});
+    return () => controller.abort();
+  }, [includeExcerpt, sessionId, span]);
 
   useEffect(() => {
     const box = thread.current;
@@ -165,6 +222,17 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     const text = question.trim();
     if (!sessionId || !connected || !text || busy || !model) return;
     if (text.length > MAX_QUESTION) { setError(t('问题文字过长。')); return; }
+    let picked: Plan = {};
+    if (includeExcerpt && mode === 'pick') {
+      const word = keyword.replace(/\s+/g, ' ').trim();
+      const start = fromDay ? dayStart(fromDay) : null;
+      const end = toDay ? dayEnd(toDay) : null;
+      if ((fromDay && start === null) || (toDay && end === null)) { setError(t('日期填写不完整。')); return; }
+      if (start !== null && end !== null && start > end) { setError(t('开始日期晚于结束日期。')); return; }
+      if (!word && start === null && end === null) { setError(t('请填写日期或关键词，或者改用「最近的消息」。')); return; }
+      if (start !== null || end !== null) picked = { start: start ?? 0, end: end ?? Math.floor(Date.now() / 1000) };
+      if (word) picked.keyword = word;
+    }
     const requestSession = sessionId;
     const started = Date.now();
     const userTurn: AiTurn = { id: 'user-' + (++turnCounter.current), role: 'user', text, time: started, model };
@@ -179,13 +247,14 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     let answer = '';
     let citations: AiTurn['citations'];
     let truncated = false;
+    let scope: string | undefined;
     let redraw = 0;
     const here = () => currentSession.current === requestSession;
     /** Draws the answer so far: the first call adds its turn, later ones replace it. */
     const show = (patch: Partial<AiTurn> = {}) => {
       if (!here()) return;
       setTurns(previous => {
-        const turn: AiTurn = { id: answerId, role: 'assistant', text: answer, model, time: started, citations, truncated, ...patch };
+        const turn: AiTurn = { id: answerId, role: 'assistant', text: answer, model, time: started, citations, truncated, scope, ...patch };
         const at = previous.findIndex(old => old.id === answerId);
         return at < 0 ? [...previous, turn].slice(-MAX_VISIBLE_TURNS) : previous.map((old, n) => (n === at ? turn : old));
       });
@@ -194,18 +263,34 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       let excerpt: string | undefined;
       if (includeExcerpt) {
         // Explicitly requested current-session text only; no other contacts or media.
-        const { texts, more } = await recentTexts(requestSession, size, controller.signal);
+        let plan = picked;
+        if (mode === 'auto') {
+          // First the model is asked where to read. This request holds the question and the earlier AI turns,
+          // no chat message; its answer is a period and/or a keyword, checked by parsePlan.
+          setStage('planning');
+          const known = span ?? await daySpan(requestSession, controller.signal).catch(() => null);
+          const planning = buildAiMessages(text, history);
+          planning[planning.length - 1] = { role: 'user', content: planRequest(text, new Date(), known?.first, known?.last) };
+          let reply = '';
+          await bridgeComplete(model, planning, controller.signal, piece => { reply += piece; }, 'plan');
+          plan = parsePlan(reply);
+        }
+        setStage('reading');
+        const read = await gather(requestSession, plan, mode === 'recent' ? size : MAX_ATTACHED, mode === 'auto', controller.signal);
         const result = prepareAiExcerpt({
-          sessionId: requestSession, messages: texts,
+          sessionId: requestSession, messages: read.collected.texts,
           // every message read counts: a clock a little off must not leave the newest ones out
           start: 0, end: Number.MAX_SAFE_INTEGER,
-          maxMessages: size, maxCharacters: size > 80 ? 16_000 : 12_000,
+          maxMessages: read.limit, maxCharacters: read.limit > 80 ? 16_000 : 12_000,
+          keep: read.keep, notes: read.notes, partial: read.chosen ? read.collected.more : undefined,
         });
         if (!result.citations.length) throw new Error(t('这个会话最近的记录里没有可以分析的文字消息。'));
         excerpt = result.prompt;
         citations = result.citations;
-        truncated = result.truncated || more;
+        truncated = result.truncated || read.collected.more;
+        scope = read.describe(result.citations.length);
       }
+      setStage('answering');
       await bridgeComplete(model, buildAiMessages(text, history, excerpt), controller.signal, piece => {
         answer += piece;
         // pieces come many times a second; the page redraws at most every 60 ms
@@ -243,6 +328,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       if (activeRequest.current === controller) {
         activeRequest.current = null;
         setBusy(false);
+        setStage('');
       }
     }
   };
@@ -316,6 +402,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       </div>
       <div className="ai-turn-body">{turn.role === 'assistant' ? <Markdown text={turn.text} /> : turn.text}</div>
       {turn.partial && <p className="ai-turn-note">{t('回答没有写完（已停止或中断）。')}</p>}
+      {turn.scope && <p className="ai-turn-note ai-turn-scope">{t('本轮读取：{scope}', { scope: turn.scope })}</p>}
       {turn.truncated && <p className="ai-turn-note">{t('本次只分析了部分微信聊天记录，并非完整历史。')}</p>}
       {turn.citations && turn.citations.length > 0 && <details className="ai-turn-citations">
         <summary>{t('本轮附带的微信消息（{n} 条）', { n: turn.citations.length })}</summary>
@@ -329,7 +416,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       </div>}
     </article>)}
     {busy && turns[turns.length - 1]?.role !== 'assistant' && <p className="ai-thread-working" role="status">
-      <span className="ai-dots" aria-hidden="true"><i /><i /><i /></span>{includeExcerpt ? t('正在读取聊天记录并等待 AI 回答…') : t('AI 正在思考…')}</p>}
+      <span className="ai-dots" aria-hidden="true"><i /><i /><i /></span>{stage === 'planning' ? t('正在根据问题判断要读哪一段聊天记录…') : stage === 'reading' ? t('正在读取聊天记录…') : t('AI 正在思考…')}</p>}
   </div>;
 
   const composer = <div className="ai-composer">
@@ -350,11 +437,26 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       <span className="ai-count" aria-hidden="true">{question.length}/{MAX_QUESTION}</span>
     </div>
     {includeExcerpt && <div className="ai-excerpt-size">
-      <label className="field-label" htmlFor="ai-size">{t('附带多少')}</label>
-      <select id="ai-size" value={size} onChange={e => setSize(Number(e.target.value))}>
-        {SIZES.map(n => <option value={n} key={n}>{t('最近 {n} 条文字消息', { n })}</option>)}
+      <label className="field-label" htmlFor="ai-mode">{t('附带哪些')}</label>
+      <select id="ai-mode" value={mode} onChange={e => setMode(e.target.value as Mode)}>
+        <option value="auto">{t('自动：根据问题决定读哪一段')}</option>
+        <option value="recent">{t('最近的消息')}</option>
+        <option value="pick">{t('指定日期或关键词')}</option>
       </select>
-      <p className="card-note">{t('只包含这个会话的文字，不包含图片、语音、文件和其他会话；对方的微信号不会发送。')}</p>
+      {mode === 'recent' && <select id="ai-size" aria-label={t('附带多少')} value={size} onChange={e => setSize(Number(e.target.value))}>
+        {SIZES.map(n => <option value={n} key={n}>{t('最近 {n} 条文字消息', { n })}</option>)}
+      </select>}
+      {mode === 'pick' && <div className="ai-pick">
+        <label><span className="field-label">{t('从')}</span>
+          <input type="date" value={fromDay} min={span?.first} max={toDay || span?.last} onChange={e => setFromDay(e.target.value)} /></label>
+        <label><span className="field-label">{t('到')}</span>
+          <input type="date" value={toDay} min={fromDay || span?.first} max={span?.last} onChange={e => setToDay(e.target.value)} /></label>
+        <label><span className="field-label">{t('关键词')}</span>
+          <input type="text" value={keyword} maxLength={40} placeholder={t('可不填')} onChange={e => setKeyword(e.target.value)} /></label>
+      </div>}
+      {mode === 'auto' && <p className="card-note">{t('直接在问题里说时间或话题就行，例如「上周聊了什么」「他是怎么说合同的」。会先多用一次模型请求来判断读哪一段，这一步不发送聊天内容。')}</p>}
+      {mode === 'pick' && <p className="card-note">{t('日期和关键词可以只填一样。按关键词时，会附带含有它的消息和每条前后各两条。')}{span ? ' ' + t('这个会话的消息从 {first} 到 {last}。', span) : ''}</p>}
+      <p className="card-note">{t('每轮最多附带 150 条文字消息。只包含这个会话的文字，不包含图片、语音、文件和其他会话；对方的微信号不会发送。')}</p>
     </div>}
     <div className="ai-composer-actions">
       {busy ? <button type="button" className="secondary-button" onClick={stop}>{t('停止生成')}</button>
