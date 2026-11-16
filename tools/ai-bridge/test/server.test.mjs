@@ -2,7 +2,8 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
-import { createBridge, DEVELOPER_PROMPT, PAIR_ORIGIN } from '../server.mjs';
+import { readFile } from 'node:fs/promises';
+import { ATTACH_LABEL_EN, ATTACH_LABEL_ZH, createBridge, DEVELOPER_PROMPT, PAIR_ORIGIN } from '../server.mjs';
 
 const GUARD = { Origin: PAIR_ORIGIN, 'X-WeFlow-AI-Request': '1' };
 const servers = [];
@@ -135,6 +136,28 @@ describe('pairing a browser', () => {
     expired.calls.saved = { secret: 'x'.repeat(43), createdAt: 0, expiresAt: Date.now() - 1 };
     assert.equal(await expired.bridge.restore(), false);
     assert.equal(expired.calls.saved, null);
+  });
+});
+
+describe('what the model is told about the page', () => {
+  it('names the controls as the page shows them', async () => {
+    const card = await readFile(new URL('../../../web/src/ai/AiCard.tsx', import.meta.url), 'utf8');
+    const english = await readFile(new URL('../../../web/src/i18n/en.ts', import.meta.url), 'utf8');
+    // the checkbox the model sends the reader to must exist under that very name
+    assert.ok(card.includes(ATTACH_LABEL_ZH), 'the Chinese label is not in AiCard.tsx any more');
+    assert.ok(english.includes(ATTACH_LABEL_EN), 'the English label is not in en.ts any more');
+    assert.ok(DEVELOPER_PROMPT.includes(ATTACH_LABEL_ZH) && DEVELOPER_PROMPT.includes(ATTACH_LABEL_EN));
+    // and so must the amounts it offers
+    assert.match(card, /SIZES = \[30, 80, 150\]/);
+    assert.match(DEVELOPER_PROMPT, /30, 80 or 150/);
+  });
+
+  it('says there is nothing to upload, and what to do instead', () => {
+    assert.match(DEVELOPER_PROMPT, /Never tell the user to upload or attach a file/);
+    assert.match(DEVELOPER_PROMPT, /no upload button, paperclip or drag-and-drop/);
+    assert.match(DEVELOPER_PROMPT, /tell the user to tick that checkbox and ask again/);
+    assert.match(DEVELOPER_PROMPT, /Do not guess what the chat says/);
+    assert.match(DEVELOPER_PROMPT, /cannot send WeChat messages/);
   });
 });
 

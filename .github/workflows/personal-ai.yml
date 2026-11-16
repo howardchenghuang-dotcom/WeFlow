@@ -5,6 +5,7 @@ on:
     paths:
       - "tools/ai-bridge/**"
       - "web/src/ai/**"
+      - "web/src/i18n/en.ts"
       - "web/src/chat/useChatPage.tsx"
       - ".github/workflows/personal-ai.yml"
   push:
@@ -13,6 +14,7 @@ on:
     paths:
       - "tools/ai-bridge/**"
       - "web/src/ai/**"
+      - "web/src/i18n/en.ts"
       - "web/src/chat/useChatPage.tsx"
       - ".github/workflows/personal-ai.yml"
   workflow_dispatch:
