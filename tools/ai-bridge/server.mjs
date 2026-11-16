@@ -16,6 +16,9 @@ export const ATTACH_LABEL_EN = 'Attach WeChat text of this conversation to this 
 /** The three ways to choose what is attached, as the page's menu names them: automatic, latest, picked. */
 export const MODE_LABELS_ZH = ['自动：根据问题决定读哪一段', '最近的消息', '指定日期或关键词'];
 export const MODE_LABELS_EN = ['Automatic: read what the question is about', 'The latest messages', 'Dates or a keyword'];
+/** The button under an answer that read only the beginning of a period. */
+export const CONTINUE_LABEL_ZH = '接着读后面的';
+export const CONTINUE_LABEL_EN = 'Read on from there';
 
 export const DEVELOPER_PROMPT = [
   // Where it is. Without this the model answers as the ChatGPT web app would, and tells the reader to press
@@ -35,8 +38,8 @@ export const DEVELOPER_PROMPT = [
   'However they are chosen, at most 150 text messages of the open conversation go with one turn; a keyword search attaches the matching messages with the two before and after each.',
   'The excerpt goes with that one turn only and the box unticks itself afterwards; on later turns you have your own earlier answers but not the messages themselves, so the user ticks the box again when you need to read them again.',
   'When a question needs chat content and no excerpt is attached to the current turn, say plainly that you cannot see the chat right now and tell the user to tick that checkbox and ask again. Do not guess what the chat says.',
-  'When the excerpt says it holds only part of what was asked for (the beginning of a period, or some of the matches), tell the user what you have read, up to which date, and that they can ask again for the rest by naming the remaining dates. Do not present a part as the whole.',
-  'When the user wants more than 150 messages at once, say that this is the current limit of the panel and suggest going through the period in parts.',
+  `When the excerpt says it holds only PART of what was asked for, begin your answer by telling the user so in one or two plain sentences: that the period (or the matches) held more than the 150 messages one turn can take, and up to which date and time you have read. Then answer from what you have, and end by reminding them that the rest is unread and that the button "${CONTINUE_LABEL_ZH}" under your answer (English interface: "${CONTINUE_LABEL_EN}") reads on from there, or that they can choose a shorter range of dates. Never present a part as the whole, and never summarise or guess at the part you have not read.`,
+  'When the user wants more than 150 messages at once, say that this is the limit of one turn and that a longer period is read in parts, one turn after another, with that button.',
 
   // What to do with an excerpt, and what never to do because of one.
   'Answer the current user question and use earlier AI turns only as conversation context.',

@@ -166,6 +166,91 @@ describe('the latest messages, as many as chosen', () => {
   });
 });
 
+describe('a period that holds more than one turn can take', () => {
+  const day = Array.from({ length: 320 }, (_, n) => message(at(2026, 10, 1, 0, n), '第' + n + '条'));
+  const stopped = (n: number) => new Date(at(2026, 10, 1, 0, n) * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+  it('is said to hold too much before anything is sent', async () => {
+    serve(day);
+    await ready('十月一号聊了什么？', 'pick');
+    set('从', '2026-10-01');
+    set('到', '2026-10-01');
+    const warning = await screen.findByText(/这段日期约有 320 条消息（含图片等），超过了每轮 150 条文字的上限/);
+    expect(warning.className).toContain('ai-over');
+    expect(bodies).toHaveLength(0);
+    // a few days within the limit are only counted
+    serve(talk);
+    cleanup();
+    await ready('这几天说了什么？', 'pick');
+    set('从', '2026-10-01');
+    set('到', '2026-10-06');
+    expect(await screen.findByText('这段日期约有 5 条消息（含图片等）。')).toBeTruthy();
+  });
+
+  it('is read from its beginning, says where it stopped, and goes on from there at a click', async () => {
+    serve(day);
+    const box = await ready('十月一号聊了什么？', 'pick');
+    set('从', '2026-10-01');
+    set('到', '2026-10-01');
+    send();
+    await screen.findByText('回答');
+    expect(sent()).toContain('第0条');
+    expect(sent()).not.toContain('第150条');
+    expect(screen.getByText('这段时间的消息超过了每轮 150 条的上限，这次只读到 ' + stopped(149) + '。')).toBeTruthy();
+
+    // going on: nothing is sent by the click, the box is ticked for the reader to see, and a question is offered
+    fireEvent.click(screen.getByRole('button', { name: '接着读后面的' }));
+    expect(bodies).toHaveLength(1);
+    expect((screen.getByLabelText(/本轮附带这个会话的微信聊天片段/) as HTMLInputElement).checked).toBe(true);
+    expect(box.value).toBe('接着上面的分析，继续看后面的消息。');
+    expect(screen.getByText('这一轮会从 ' + stopped(149) + ' 接着往后读，最多 150 条文字消息。')).toBeTruthy();
+    // the menu is out of the way while a continuation is set
+    expect(screen.queryByLabelText('附带哪些')).toBeNull();
+
+    send();
+    await screen.findAllByText('回答');
+    expect(plans()).toHaveLength(0);
+    // from the last message read (read again, so that none of the same second is skipped) for another 150
+    expect(sent()).toContain('] Other: 第149条');
+    expect(sent()).toContain('第298条');
+    expect(sent()).not.toContain('第148条');
+    expect(sent()).not.toContain('第299条');
+    expect(sent()).toContain('This excerpt is only PART of what was asked for');
+
+    // and once more reaches the end: no notice under the last answer
+    fireEvent.click(screen.getAllByRole('button', { name: '接着读后面的' })[1]);
+    send();
+    await screen.findAllByText('回答');
+    expect(sent()).toContain('第298条');
+    expect(sent()).toContain('第319条');
+    expect(sent()).not.toContain('only PART');
+    expect(screen.getAllByRole('button', { name: '接着读后面的' })).toHaveLength(2);
+    expect(questions()).toHaveLength(3);
+  });
+
+  it('can be dropped again before sending', async () => {
+    serve(day);
+    await ready('十月一号聊了什么？', 'pick');
+    set('从', '2026-10-01');
+    set('到', '2026-10-01');
+    send();
+    await screen.findByText('回答');
+    fireEvent.click(screen.getByRole('button', { name: '接着读后面的' }));
+    fireEvent.click(screen.getByRole('button', { name: '不接着读，重新选择' }));
+    expect(screen.getByLabelText('附带哪些')).toBeTruthy();
+    expect(screen.queryByText(/这一轮会从/)).toBeNull();
+  });
+
+  it('is offered too when the question itself chose the period', async () => {
+    serve(day);
+    plan = '{"from":"2026-10-01","to":"2026-10-01","keyword":null}';
+    await ready('十月一号聊了什么？');
+    send();
+    await screen.findByText('回答');
+    expect(screen.getByRole('button', { name: '接着读后面的' })).toBeTruthy();
+  });
+});
+
 describe('dates and a keyword, filled in', () => {
   it('reads the days given, both included, and asks no one where to read', async () => {
     await ready('这几天说了什么？', 'pick');

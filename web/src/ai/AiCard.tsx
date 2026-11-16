@@ -26,10 +26,22 @@ type Stage = '' | 'planning' | 'reading' | 'answering';
 /** The first and the last day a conversation has messages on (`YYYY-MM-DD`). */
 type Span = { first: string; last: string };
 
-async function daySpan(sessionId: string, signal: AbortSignal): Promise<Span | null> {
-  const days = Object.keys(await getDateCounts(sessionId, signal)).filter(day => dayStart(day) !== null).sort();
+/** How many messages (of any kind) each day has. */
+type Counts = Record<string, number>;
+/** Where a period that did not fit in one turn goes on: from this second (included) to its end. */
+type Rest = NonNullable<AiTurn['rest']>;
+
+function spanOf(counts: Counts): Span | null {
+  const days = Object.keys(counts).filter(day => dayStart(day) !== null).sort();
   return days.length ? { first: days[0], last: days[days.length - 1] } : null;
 }
+
+async function daySpan(sessionId: string, signal: AbortSignal): Promise<Span | null> {
+  return spanOf(await getDateCounts(sessionId, signal));
+}
+
+/** A moment as the reader's computer writes dates and times, to the minute. */
+const moment = (seconds: number) => new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 const day = (seconds: number) => dayOf(new Date(seconds * 1000));
 
@@ -101,6 +113,9 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
   const [toDay, setToDay] = useState('');
   const [keyword, setKeyword] = useState('');
   const [span, setSpan] = useState<Span | null>(null);
+  const [counts, setCounts] = useState<Counts | null>(null);
+  // set by "接着读后面的": the next turn reads on from there, whatever the menu says
+  const [resume, setResume] = useState<Rest | null>(null);
   const [stage, setStage] = useState<Stage>('');
   const [question, setQuestion] = useState('');
   const [includeExcerpt, setIncludeExcerpt] = useState(false);
@@ -125,6 +140,8 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     setIncludeExcerpt(false);
     setFromDay(''); setToDay(''); setKeyword('');
     setSpan(null);
+    setCounts(null);
+    setResume(null);
     setStage('');
     setError('');
     setBusy(false);
@@ -135,11 +152,15 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
   // The days this conversation has messages on: asked for once the reader means to attach some, to bound the
   // date fields and to tell the planner. Read from the local backend; nothing of it is sent before a question is.
   useEffect(() => {
-    if (!includeExcerpt || span) return;
+    if (!includeExcerpt || counts) return;
     const controller = new AbortController();
-    void daySpan(sessionId, controller.signal).then(found => { if (!controller.signal.aborted) setSpan(found); }, () => {});
+    void getDateCounts(sessionId, controller.signal).then(found => {
+      if (controller.signal.aborted) return;
+      setCounts(found);
+      setSpan(spanOf(found));
+    }, () => {});
     return () => controller.abort();
-  }, [includeExcerpt, sessionId, span]);
+  }, [includeExcerpt, sessionId, counts]);
 
   useEffect(() => {
     const box = thread.current;
@@ -223,7 +244,9 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     if (!sessionId || !connected || !text || busy || !model) return;
     if (text.length > MAX_QUESTION) { setError(t('问题文字过长。')); return; }
     let picked: Plan = {};
-    if (includeExcerpt && mode === 'pick') {
+    const going = includeExcerpt ? resume : null;
+    if (going) picked = { start: going.start, end: going.end };
+    else if (includeExcerpt && mode === 'pick') {
       const word = keyword.replace(/\s+/g, ' ').trim();
       const start = fromDay ? dayStart(fromDay) : null;
       const end = toDay ? dayEnd(toDay) : null;
@@ -248,13 +271,14 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     let citations: AiTurn['citations'];
     let truncated = false;
     let scope: string | undefined;
+    let rest: AiTurn['rest'];
     let redraw = 0;
     const here = () => currentSession.current === requestSession;
     /** Draws the answer so far: the first call adds its turn, later ones replace it. */
     const show = (patch: Partial<AiTurn> = {}) => {
       if (!here()) return;
       setTurns(previous => {
-        const turn: AiTurn = { id: answerId, role: 'assistant', text: answer, model, time: started, citations, truncated, scope, ...patch };
+        const turn: AiTurn = { id: answerId, role: 'assistant', text: answer, model, time: started, citations, truncated, scope, rest, ...patch };
         const at = previous.findIndex(old => old.id === answerId);
         return at < 0 ? [...previous, turn].slice(-MAX_VISIBLE_TURNS) : previous.map((old, n) => (n === at ? turn : old));
       });
@@ -264,7 +288,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       if (includeExcerpt) {
         // Explicitly requested current-session text only; no other contacts or media.
         let plan = picked;
-        if (mode === 'auto') {
+        if (mode === 'auto' && !going) {
           // First the model is asked where to read. This request holds the question and the earlier AI turns,
           // no chat message; its answer is a period and/or a keyword, checked by parsePlan.
           setStage('planning');
@@ -276,7 +300,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
           plan = parsePlan(reply);
         }
         setStage('reading');
-        const read = await gather(requestSession, plan, mode === 'recent' ? size : MAX_ATTACHED, mode === 'auto', controller.signal);
+        const read = await gather(requestSession, plan, mode === 'recent' && !going ? size : MAX_ATTACHED, mode === 'auto' && !going, controller.signal);
         const result = prepareAiExcerpt({
           sessionId: requestSession, messages: read.collected.texts,
           // every message read counts: a clock a little off must not leave the newest ones out
@@ -289,6 +313,12 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
         citations = result.citations;
         truncated = result.truncated || read.collected.more;
         scope = read.describe(result.citations.length);
+        // A period that holds more than fit was read from its beginning: where it stopped is kept, so that the
+        // reader can go on from there. The last message read is read again, so that none sent in the same second
+        // is skipped.
+        if (read.keep === 'oldest' && plan.end !== undefined && (result.truncated || read.collected.more)) {
+          rest = { start: result.citations[result.citations.length - 1].createTime, end: plan.end };
+        }
       }
       setStage('answering');
       await bridgeComplete(model, buildAiMessages(text, history, excerpt), controller.signal, piece => {
@@ -302,6 +332,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       show({ text: answer || t('模型返回了空白内容。') });
       // "本轮" means this turn: the next question sends WeChat text only when it is ticked again.
       setIncludeExcerpt(false);
+      setResume(null);
     } catch (problem) {
       // Another conversation was opened meanwhile: its card starts empty, nothing to put back.
       if (!here()) return;
@@ -312,7 +343,7 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       if (answer) {
         // what was written so far stays, marked as not the whole answer
         show({ partial: true });
-        if (includeExcerpt) setIncludeExcerpt(false);
+        if (includeExcerpt) { setIncludeExcerpt(false); setResume(null); }
       } else {
         // nothing came: the question is editable again and no unanswered turn stays in the history, where the
         // next question would send it along
@@ -347,6 +378,19 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
     setIncludeExcerpt(true);
     composerBox.current?.focus();
   };
+
+  /** Ticks WeChat text for the next turn, to read on from where a period was cut off. Nothing is sent yet. */
+  const continueFrom = (from: Rest) => {
+    setResume(from);
+    setIncludeExcerpt(true);
+    setQuestion(current => current || t('接着上面的分析，继续看后面的消息。'));
+    composerBox.current?.focus();
+  };
+
+  // how many messages the chosen days hold, for the reader to see before sending
+  const inRange = mode === 'pick' && counts && (fromDay || toDay) && !keyword.trim()
+    ? Object.entries(counts).reduce((sum, [date, count]) => ((!fromDay || date >= fromDay) && (!toDay || date <= toDay) ? sum + count : sum), 0)
+    : null;
 
   const copy = async (turn: AiTurn) => {
     try {
@@ -403,6 +447,10 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       <div className="ai-turn-body">{turn.role === 'assistant' ? <Markdown text={turn.text} /> : turn.text}</div>
       {turn.partial && <p className="ai-turn-note">{t('回答没有写完（已停止或中断）。')}</p>}
       {turn.scope && <p className="ai-turn-note ai-turn-scope">{t('本轮读取：{scope}', { scope: turn.scope })}</p>}
+      {turn.rest && <div className="ai-turn-rest" role="note">
+        <p>{t('这段时间的消息超过了每轮 150 条的上限，这次只读到 {time}。', { time: moment(turn.rest.start) })}</p>
+        <button type="button" className="secondary-button" disabled={busy} onClick={() => continueFrom(turn.rest!)}>{t('接着读后面的')}</button>
+      </div>}
       {turn.truncated && <p className="ai-turn-note">{t('本次只分析了部分微信聊天记录，并非完整历史。')}</p>}
       {turn.citations && turn.citations.length > 0 && <details className="ai-turn-citations">
         <summary>{t('本轮附带的微信消息（{n} 条）', { n: turn.citations.length })}</summary>
@@ -432,11 +480,15 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       }} />
     <div className="ai-composer-meta">
       <label className="ai-context-option"><input type="checkbox" checked={includeExcerpt}
-        onChange={e => setIncludeExcerpt(e.target.checked)} />
+        onChange={e => { setIncludeExcerpt(e.target.checked); if (!e.target.checked) setResume(null); }} />
         <span>{t('本轮附带这个会话的微信聊天片段（会发送到 ChatGPT 云端）')}</span></label>
       <span className="ai-count" aria-hidden="true">{question.length}/{MAX_QUESTION}</span>
     </div>
-    {includeExcerpt && <div className="ai-excerpt-size">
+    {includeExcerpt && resume && <div className="ai-excerpt-size">
+      <p className="card-note ai-resume" role="status">{t('这一轮会从 {time} 接着往后读，最多 150 条文字消息。', { time: moment(resume.start) })}</p>
+      <button type="button" className="secondary-button" onClick={() => setResume(null)}>{t('不接着读，重新选择')}</button>
+    </div>}
+    {includeExcerpt && !resume && <div className="ai-excerpt-size">
       <label className="field-label" htmlFor="ai-mode">{t('附带哪些')}</label>
       <select id="ai-mode" value={mode} onChange={e => setMode(e.target.value as Mode)}>
         <option value="auto">{t('自动：根据问题决定读哪一段')}</option>
@@ -456,6 +508,9 @@ export function AiCard({ sessionId, sessionName }: { sessionId: string; sessionN
       </div>}
       {mode === 'auto' && <p className="card-note">{t('直接在问题里说时间或话题就行，例如「上周聊了什么」「他是怎么说合同的」。会先多用一次模型请求来判断读哪一段，这一步不发送聊天内容。')}</p>}
       {mode === 'pick' && <p className="card-note">{t('日期和关键词可以只填一样。按关键词时，会附带含有它的消息和每条前后各两条。')}{span ? ' ' + t('这个会话的消息从 {first} 到 {last}。', span) : ''}</p>}
+      {inRange !== null && <p className={'card-note' + (inRange > MAX_ATTACHED ? ' ai-over' : '')} role="status">{inRange > MAX_ATTACHED
+        ? t('这段日期约有 {n} 条消息（含图片等），超过了每轮 150 条文字的上限。AI 会从头读起，并告诉你读到了哪里，之后可以接着读；也可以先把日期缩短。', { n: inRange })
+        : t('这段日期约有 {n} 条消息（含图片等）。', { n: inRange })}</p>}
       <p className="card-note">{t('每轮最多附带 150 条文字消息。只包含这个会话的文字，不包含图片、语音、文件和其他会话；对方的微信号不会发送。')}</p>
     </div>}
     <div className="ai-composer-actions">

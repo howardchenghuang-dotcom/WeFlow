@@ -1196,4 +1196,11 @@ export const en: Record<string, string> = {
   "请填写日期或关键词，或者改用「最近的消息」。": "Give dates or a keyword, or choose \"The latest messages\".",
   "这个会话的消息从 {first} 到 {last}。": "This conversation has messages from {first} to {last}.",
   "附带哪些": "What to attach",
+  "接着上面的分析，继续看后面的消息。": "Carry on from the analysis above with the messages that follow.",
+  "这段时间的消息超过了每轮 150 条的上限，这次只读到 {time}。": "This period holds more than the 150 messages one turn can take; this time it was read up to {time}.",
+  "接着读后面的": "Read on from there",
+  "这一轮会从 {time} 接着往后读，最多 150 条文字消息。": "This turn reads on from {time}, at most 150 text messages.",
+  "不接着读，重新选择": "Do not read on; choose again",
+  "这段日期约有 {n} 条消息（含图片等），超过了每轮 150 条文字的上限。AI 会从头读起，并告诉你读到了哪里，之后可以接着读；也可以先把日期缩短。": "These dates hold about {n} {n|message|messages} (pictures and the like included), more than the 150 text messages one turn can take. The AI reads from the beginning and says where it stopped, and you can read on from there; or choose fewer days first.",
+  "这段日期约有 {n} 条消息（含图片等）。": "These dates hold about {n} {n|message|messages} (pictures and the like included).",
 };

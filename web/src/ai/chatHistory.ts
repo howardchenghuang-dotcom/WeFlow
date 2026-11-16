@@ -14,6 +14,11 @@ export type AiTurn = {
   truncated?: boolean;
   /** Which messages went with the question, said for the reader. */
   scope?: string;
+  /**
+   * The period asked for held more than fit: it was read up to `start` (Unix seconds), and goes on to `end`.
+   * The reader can have the next turn read on from there.
+   */
+  rest?: { start: number; end: number };
   /** The answer was stopped, timed out or broke off: what is shown is not all of it. */
   partial?: boolean;
 };

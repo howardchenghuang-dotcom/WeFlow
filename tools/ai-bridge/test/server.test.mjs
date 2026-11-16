@@ -4,8 +4,8 @@ import { createServer, request } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import {
-  ATTACH_LABEL_EN, ATTACH_LABEL_ZH, createBridge, DEVELOPER_PROMPT, MODE_LABELS_EN, MODE_LABELS_ZH, PAIR_ORIGIN,
-  PLANNER_PROMPT,
+  ATTACH_LABEL_EN, ATTACH_LABEL_ZH, CONTINUE_LABEL_EN, CONTINUE_LABEL_ZH, createBridge, DEVELOPER_PROMPT, MODE_LABELS_EN,
+  MODE_LABELS_ZH, PAIR_ORIGIN, PLANNER_PROMPT,
 } from '../server.mjs';
 
 const GUARD = { Origin: PAIR_ORIGIN, 'X-WeFlow-AI-Request': '1' };
@@ -168,8 +168,18 @@ describe('what the model is told about the page', () => {
     assert.match(DEVELOPER_PROMPT, /at most 150 text messages/);
   });
 
-  it('is to say when it has read only a part', () => {
-    assert.match(DEVELOPER_PROMPT, /Do not present a part as the whole/);
+  it('is to say first when it has read only a part, and point to the button that reads on', async () => {
+    const card = await readFile(new URL('../../../web/src/ai/AiCard.tsx', import.meta.url), 'utf8');
+    const english = await readFile(new URL('../../../web/src/i18n/en.ts', import.meta.url), 'utf8');
+    const excerpt = await readFile(new URL('../../../web/src/ai/context.ts', import.meta.url), 'utf8');
+    assert.ok(card.includes(CONTINUE_LABEL_ZH), 'the button is not in AiCard.tsx under that name any more');
+    assert.ok(english.includes(JSON.stringify(CONTINUE_LABEL_EN)), 'the button is not in en.ts under that name any more');
+    assert.ok(DEVELOPER_PROMPT.includes(CONTINUE_LABEL_ZH) && DEVELOPER_PROMPT.includes(CONTINUE_LABEL_EN));
+    // the words the prompt reacts to are the ones the page writes into a cut-off excerpt
+    assert.ok(excerpt.includes('only PART of what was asked for'));
+    assert.match(DEVELOPER_PROMPT, /holds only PART of what was asked for, begin your answer by telling the user so/);
+    assert.match(DEVELOPER_PROMPT, /Never present a part as the whole/);
+    assert.match(DEVELOPER_PROMPT, /never summarise or guess at the part you have not read/);
   });
 
   it('says there is nothing to upload, and what to do instead', () => {

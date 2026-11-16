@@ -126,3 +126,12 @@
 .ai-pick label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .ai-pick input[type="text"] { width: 150px; }
 .ai-turn-scope { font-weight: 600; }
+
+/* a period that did not fit in one turn: where it stopped, and the way on */
+.ai-turn-rest {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px;
+  border-radius: 10px; box-shadow: var(--neu-inset); font-size: 12px; line-height: 1.5; color: var(--fg);
+}
+.ai-turn-rest p { flex: 1 1 220px; margin: 0; }
+.ai-over { color: var(--fg); font-weight: 600; }
+.ai-resume { flex: 1 1 220px; }
